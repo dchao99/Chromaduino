@@ -53,15 +53,23 @@ Request:
 Demo:
   If #define'd, a demo will run after 5s if no wire data is received from the Master
   
-Example:\
+Example:
   See ChromaduinoMaster.ino.  This just flips RGB's around.\
   See ChromaduinoScrollDemoMaster.ino.  This demonstrates scrolling text on two daisy-chained LED matrices (each must have a unique I2C address)
 
-Programming:\
-Program the board by (for example) popping the ATmega chip off a Duemilanove and connecting\
-GND-GND, 5V-VCC, RX(D0)-RXD, TX(D1)-TXD and RESET-DTR\
-and programming the Duemilanove as normal.  This will program the ATmega on the Funduino/Colorduino board.
+Programming:
+Program the board by (for example) popping the ATmega chip off a Duemilanove and connecting
+GND-GND, 5V-VCC, RX(D0)-RXD, TX(D1)-TXD and RESET-DTR
+and programming the Duemilanove as normal. This will program the ATmega on the Funduino/Colorduino board.
 
-v6 Mark Wilson 2016: original\
+v6 Mark Wilson 2016: original
+
 v7 Mark Wilson 2018: changed I2C address (was 0x05, non-standard?); added 0x10 & 0x11 commands; ignore white balance if R=0x80
 
+v8 David Chao (2018-09-12):
+* Use lincomatic's Colorduino Library https://github.com/dchao99/Colorduino 
+* Use Microview's 5x8font https://github.com/sparkfun/SparkFun_MicroView_Arduino_Library 
+* Allow one of the matrix's in the chain to become a master
+* Include a plasma morph routine in the demo library
+* Add a new master demo sketch that can display plasma over multiple matrix’s
+* Master sketches ported onto ESP8266

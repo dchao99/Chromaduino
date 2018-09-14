@@ -1,5 +1,3 @@
-#include <Wire.h>
-
 // Chromaduino
 // A driver for a Funduino/Colorduino (slave) board: 
 // * an 8x8 RGB LED matrix common anode
@@ -48,40 +46,21 @@
 
 // v6 Mark Wilson 2016: original
 // v7 Mark Wilson 2018: changed I2C address (was 0x05, non-standard?); added 0x10 & 0x11 commands; ignore white balance if R=0x80
+// v8 David Chao 18-09-11: 
+//    Use lincomatic's Colorduino Library https://github.com/dchao99/Colorduino
+//    Include a plasma morph routine in the demo library
+      
+#include <Wire.h>
+#include <Colorduino.h>
 
-#define DEMO  // enable demo
+#define WIRE_DEVICE_ADDRESS 0x70  // I2C address
+#define DEMO                      // enable demo
 
-#define MATRIX_ROWS 8
-#define MATRIX_COLS 8
-#define MATRIX_CHANNELS 3
-#define MATRIX_LEDS MATRIX_ROWS*MATRIX_COLS
-#define MATRIX_ROW_CHANNELS MATRIX_COLS*MATRIX_CHANNELS
+#define MatrixChannels     3
+#define MatrixLeds         ColorduinoScreenHeight*ColorduinoScreenWidth
+#define MatrixRowChannels  ColorduinoScreenWidth*MatrixChannels
 
-#define WIRE_DEVICE_ADDRESS 0x70
-
-#define ROW_PORT1 PORTB
-#define ROW_PORT2 PORTD
-#define LED_PORT  PORTC
-#define I2C_PORT  PORTD
-
-#define LED_SELECT 0x01
-#define LED_LATCH  0x02
-#define LED_RESET  0x04
-
-#define I2C_SCL 0x40
-#define I2C_SDA 0x80
-
-#define SET(  _reg, _bits) (_reg) |=  (_bits)
-#define CLEAR(_reg, _bits) (_reg) &= ~(_bits)
-
-
-// Two copies of the LED data, one being read from to drive the LEDs in an ISR, another being written to, via I2C
-byte matrixDataA[MATRIX_ROWS*MATRIX_ROW_CHANNELS];
-byte matrixDataB[MATRIX_ROWS*MATRIX_ROW_CHANNELS];
 byte defaultCorrection[3] = {25, 63, 63};
-
-bool matrixWriteA = true;  // 'A' is the one being written to
-int  matrixRow = 0;
 
 bool processBalance = false;
 bool balanceRecieved = false;  // true when we've rx'd a white balance command
@@ -95,9 +74,6 @@ byte  fastCommandBuffer[12];
 byte* fastCommandPtr = NULL;
 bool  processFast = false;
 
-// timer ISR
-byte timerCounter2 = 0;
-
 #ifdef DEMO
 unsigned long demoTimeout = 5000UL; // wait 5s after startup with no balance command before running demo.
 unsigned long demoTimestamp;
@@ -106,22 +82,10 @@ unsigned long demoR = 0xFF0000FFUL;
 unsigned long demoG = 0xFF00FF00UL;
 unsigned long demoB = 0xFFFF0000UL;
 unsigned long demoStep = 0;
+// plasma morph:
+unsigned long paletteStart=128000;  // initial seed
+unsigned char plasmaValue=127;      // brightness
 #endif
-
-inline void i2c_Write(byte value, byte mask)
-{
-  // I2C write to other chip on this board, msb first
-  while (mask)
-  {
-    if (value & mask)
-      SET(I2C_PORT, I2C_SDA);
-    else
-      CLEAR(I2C_PORT, I2C_SDA);
-    mask >>= 1;
-    CLEAR(I2C_PORT, I2C_SCL);
-    SET(I2C_PORT, I2C_SCL);
-  }
-}
 
 void wire_Request(void)
 {
@@ -141,12 +105,12 @@ void wire_Receive(int numBytes)
     byte command = Wire.read();
     if (command == 0x00) // start frame
     {
-      wire_DataPtr = (matrixWriteA)?matrixDataA:matrixDataB;
+      wire_DataPtr = (byte *)Colorduino.GetPixel(0,0);
       wire_DataCount = 0;
     }
     else if (command == 0x01) // show frame
     {
-      matrixWriteA = !matrixWriteA; // atomic
+      Colorduino.FlipPage();
     }
     else if (command == 0x02) // set colour balance
     {
@@ -154,11 +118,11 @@ void wire_Receive(int numBytes)
     }
     else if (command == 0x03) // set TCNT2
     {
-      byte* ptr = (matrixWriteA)?matrixDataA:matrixDataB;
+      byte *ptr = (byte *)Colorduino.GetPixel(0,0);
       if (ptr[1] == 16 && ptr[2] == 128)
-         timerCounter2 = *ptr;
+         Colorduino.SetTimerCounter(ptr[0]);
     }
-    else if (command == 0x10) // clear to black
+    else if (command == 0x10) // Clear to black
     {
       processClear = true;
     }
@@ -170,15 +134,15 @@ void wire_Receive(int numBytes)
     }
     return;
   }
-  else if (wire_DataPtr && ((numBytes % MATRIX_CHANNELS) == 0))  // read channel (RGB) data
+  else if (wire_DataPtr && ((numBytes % MatrixChannels) == 0))  // read channel (RGB) data
   {
-    while (Wire.available() && wire_DataCount < MATRIX_ROWS*MATRIX_ROW_CHANNELS)
+    while (Wire.available() && wire_DataCount < ColorduinoScreenHeight*MatrixRowChannels)
     {
       *(wire_DataPtr++) = Wire.read();
       wire_DataCount++;
     }
   }
-  else if (fastCommandPtr && ((numBytes % MATRIX_CHANNELS) == 0))  // read triplets for fast cmd
+  else if (fastCommandPtr && ((numBytes % MatrixChannels) == 0))  // read triplets for fast cmd
   {
     while (Wire.available() && wire_DataCount < sizeof(fastCommandBuffer))
     {
@@ -198,24 +162,6 @@ void wire_Receive(int numBytes)
     Wire.read();
 }
 
-// white balance
-void setCorrection(byte* pChannel, int dim)
-{
-  if (*pChannel == 0x80) return;  // Ignore (0x80, x, y)
-  
-  cli();
-  CLEAR(LED_PORT, LED_SELECT);  // bank 0, 6-bit
-  SET(LED_PORT, LED_LATCH);
-
-  for (int ctr = 0; ctr < MATRIX_COLS; ctr++)
-    for (int chan = MATRIX_CHANNELS - 1; chan >= 0; chan--)
-      i2c_Write(pChannel[chan] >> dim, 0x20); // 6- bit values
-      
-  // latches BOTH banks
-  CLEAR(LED_PORT, LED_LATCH);
-  sei();
-}
-
 void doFastCommand()
 {
   // r,g,b, flags,row0,row1, row2,row3,row4, row5,row6,row7
@@ -229,105 +175,40 @@ void doFastCommand()
   byte F = fastCommandBuffer[Idx++];
   // F=flags, B000000xy, if x is set, use black as background (otherwise leave as-is), if y is set, show buffer at end
   bool flagSetBackground = F & B00000010;
-  byte* ptr = (matrixWriteA)?matrixDataA:matrixDataB;
-  for (int row = 0; row < MATRIX_ROWS; row++)
+  PixelRGB *ptr = Colorduino.GetPixel(0,0);
+  for (int row = 0; row < ColorduinoScreenHeight; row++)
   {
     byte mask = fastCommandBuffer[Idx++];
-    for (int col = 0; col < MATRIX_COLS; col++)
+    for (int col = 0; col < ColorduinoScreenWidth; col++)
     {
       if (mask & 0x01)  // set the colour
       {
-         (*ptr++) = R;
-         (*ptr++) = G;
-         (*ptr++) = B;
+         ptr->r = R;
+         ptr->g = G;
+         ptr->b = B;
       }
       else if (flagSetBackground) // write black
       {
-         (*ptr++) = 0x00;
-         (*ptr++) = 0x00;
-         (*ptr++) = 0x00;
+         ptr->r = 0;
+         ptr->g = 0;
+         ptr->b = 0;
       }
-      else  // leave colour as-is
-      {
-        ptr += 3;
-      }
+      ptr++;
       mask >>= 1;
     }
   }
   
   if (F & B00000001)  // start displaying
   {
-    matrixWriteA = !matrixWriteA;
-  }
-}
-
-ISR(TIMER2_OVF_vect)
-{
-  TCNT2 = timerCounter2;
-
-  // all rows off
-  ROW_PORT1 = ROW_PORT2 = 0x00;
-  
-  SET(LED_PORT, LED_SELECT);  // bank 1, 8-bit
-  SET(LED_PORT, LED_LATCH);
-  
-  byte* pChannel = (!matrixWriteA)?matrixDataA:matrixDataB;  // (READING this time)
-  // clock in the channel data for the columns in the current row. REVERSE ORDER!
-  pChannel += matrixRow*MATRIX_ROW_CHANNELS + MATRIX_ROW_CHANNELS - 1;
-  for (int ctr = 0; ctr < MATRIX_ROW_CHANNELS; ctr++,pChannel--)
-    i2c_Write(*pChannel, 0x80);
-  
-  // latches BOTH banks
-  CLEAR(LED_PORT, LED_LATCH);
-  
-  // turn on this row
-  if (matrixRow < 6)
-  {
-    SET(ROW_PORT1, 0x01 << matrixRow++);
-  }
-  else if (matrixRow == 6)
-  {
-    SET(ROW_PORT2, 0x08);
-    matrixRow = 7;
-  }
-  else
-  {
-    SET(ROW_PORT2, 0x10);
-    matrixRow = 0;
+    Colorduino.FlipPage();
   }
 }
 
 void setup()
 {
-  // clear to black
-  memset(matrixDataA, 0x00, sizeof(matrixDataA));
-  memset(matrixDataB, 0x00, sizeof(matrixDataB));
-  
-  DDRB = DDRC = DDRD = 0xFF;    // ALL ports to OUTPUT
-  ROW_PORT1 = ROW_PORT2 = 0x00; 
-    
-  // reset the DM163 driver
-  CLEAR(LED_PORT, LED_RESET);
-  SET(LED_PORT, LED_RESET);
-
-  // default white balance
-  setCorrection(defaultCorrection, 0);
-
-  // configure timer2 to service LED row updates at ~800Hz
-  ASSR   = _BV(AS2);               // Internal Calibrated clock source 16MHz
-  TCCR2A = 0x00;                   // Normal mode
-  TCCR2B = _BV(CS22) | _BV(CS20);  // clk/128
-  TIMSK2 = _BV(TOIE2);             // Overflow interrupt only
-
-  unsigned long timerFrequencyHz = 800UL; // sweet spot for brightness and steadyness, even when dimmed
-  unsigned long clockFrequencyHz = 16000000UL;
-  clockFrequencyHz /= 128UL;
-  // clock cycles to get the desired period: 
-  unsigned long clockCyclesForTimerPeriod = clockFrequencyHz / timerFrequencyHz;
-  // overflow the 8-bit counter: 
-  timerCounter2 = 255 - clockCyclesForTimerPeriod;
-  TCNT2 = timerCounter2;
-  sei();
+  // initialize the led matrix controller
+  Colorduino.Init();
+  Colorduino.SetWhiteBal(defaultCorrection);
   
   Wire.begin(WIRE_DEVICE_ADDRESS);
   Wire.onRequest(wire_Request);
@@ -342,7 +223,9 @@ void loop()
 {
   if (processBalance)
   {
-    setCorrection((matrixWriteA)?matrixDataA:matrixDataB, 0);
+    byte *newCorrection = (byte *)Colorduino.GetPixel(0,0);
+    if (newCorrection[0] != 0x80)  // 0x80: skip, use default correction
+      Colorduino.SetWhiteBal(newCorrection);
     processBalance = false;
     balanceRecieved = true;
   }
@@ -353,7 +236,7 @@ void loop()
   }
   else if (processClear)
   {
-    memset((matrixWriteA)?matrixDataA:matrixDataB, 0x00, MATRIX_ROWS*MATRIX_ROW_CHANNELS);
+    Colorduino.ColorFill(0,0,0);
     processClear = false;
   }
   
@@ -365,42 +248,98 @@ void loop()
     {
       // kick demo animation
       demoTimestamp = now;
-      byte* pChannel = (matrixWriteA)?matrixDataA:matrixDataB;
+      PixelRGB* pChannel = Colorduino.GetPixel(0,0);
+      
       if (demoStep < 20)  // first frames are solid/dimmed
-        setCorrection(defaultCorrection, 4-(demoStep%5));
-      for (int row = 0; row < MATRIX_ROWS; row++)
-        for (int col = 0; col < MATRIX_COLS; col++)
+      {
+        byte demoCorrection[3];
+        int dim = 4-(demoStep%5);
+        for (int chan = MatrixChannels - 1; chan >= 0; chan--)
+          demoCorrection[chan] = defaultCorrection[chan] >> dim;
+        Colorduino.SetWhiteBal(demoCorrection);
+      }
+        
+      for (int row = 0; row < ColorduinoScreenHeight; row++)
+        for (int col = 0; col < ColorduinoScreenWidth; col++)
         {
           if (demoStep < 20)
           {
             int index = 8*(demoStep/5);
-            *(pChannel++) = demoR >> index;
-            *(pChannel++) = demoG >> index;
-            *(pChannel++) = demoB >> index;
+            pChannel->r = demoR >> index;
+            pChannel->g = demoG >> index;
+            pChannel->b = demoB >> index;
           }
           else
           {
-            int index = 8*min(min(MATRIX_ROWS - row - 1, row), 
-                              min(MATRIX_COLS - col - 1, col));
-            *(pChannel++) = demoR >> index;
-            *(pChannel++) = demoG >> index;
-            *(pChannel++) = demoB >> index;
+            unsigned long shift = paletteStart + demoStep;
+            float value = sin(dist(col + shift, row, 128.0, 128.0) / 8.0) 
+                        + sin(dist(col, row, 64.0, 64.0) / 8.0) 
+                        + sin(dist(col, row + shift / 7, 192.0, 64) / 7.0)
+                        + sin(dist(col, row, 192.0, 100.0) / 8.0);
+            HSVtoRGB( pChannel, (unsigned char)((value) * 128)&0xff );
           }
+          pChannel++;
         }
+      Colorduino.FlipPage();
       demoStep++;
-      matrixWriteA = !matrixWriteA;
-      
-      if (demoR == 0xFF0000FFUL)
-        demoTimeout = 500UL;  // dwell on first frames
+        
+      if (demoStep <= 20)
+        demoTimeout = 500UL;  // solid color pattern frame delay
       else
-        demoTimeout = 200UL;
-      if (demoStep > 20)
-      {
-        demoR = (demoR >> 8) | (random(0xFF) << 24);
-        demoG = (demoG >> 8) | (random(0xFF) << 24);
-        demoB = (demoB >> 8) | (random(0xFF) << 24);
-      }
+        demoTimeout = 160UL;  // plasm morphing frame delay
     }
   }
-#endif  
+#endif
 }
+
+#ifdef DEMO
+void HSVtoRGB(void *pChannel, unsigned char hue) 
+{
+  float r, g, b, h, s, v; //this function works with floats between 0 and 1
+  float f, p, q, t;
+  int i;
+  unsigned char *pRGB = (unsigned char *)pChannel;
+
+  h = (float)(hue / 256.0);
+  s = (float)(255 / 256.0);
+  v = (float)(plasmaValue / 256.0);
+
+  //if saturation is 0, the color is a shade of grey
+  if(s == 0.0) {
+    b = v;
+    g = b;
+    r = g;
+  }
+  //if saturation > 0, more complex calculations are needed
+  else
+  {
+    h *= 6.0; //to bring hue to a number between 0 and 6, better for the calculations
+    i = (int)(floor(h)); //e.g. 2.7 becomes 2 and 3.01 becomes 3 or 4.9999 becomes 4
+    f = h - i;//the fractional part of h
+
+    p = (float)(v * (1.0 - s));
+    q = (float)(v * (1.0 - (s * f)));
+    t = (float)(v * (1.0 - (s * (1.0 - f))));
+
+    switch(i)
+    {
+      case 0: r=v; g=t; b=p; break;
+      case 1: r=q; g=v; b=p; break;
+      case 2: r=p; g=v; b=t; break;
+      case 3: r=p; g=q; b=v; break;
+      case 4: r=t; g=p; b=v; break;
+      case 5: r=v; g=p; b=q; break;
+      default: r = g = b = 0; break;
+    }
+  }
+  *(pRGB++) = (int)(r * 255.0);
+  *(pRGB++) = (int)(g * 255.0);
+  *(pRGB++) = (int)(b * 255.0);
+}
+
+float dist(float a, float b, float c, float d) 
+{
+  return sqrt((c-a)*(c-a)+(d-b)*(d-b));
+}
+#endif
+
