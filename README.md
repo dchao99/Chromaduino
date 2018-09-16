@@ -68,7 +68,7 @@ v7 Mark Wilson 2018: changed I2C address (was 0x05, non-standard?); added 0x10 &
 
 v8 David Chao (2018-09-12):
 * Use lincomatic's Colorduino Library https://github.com/dchao99/Colorduino 
-* Use Adafruit’s standard 5x8font 
+* Use Adafruit’s classic 5x8font 
 * Allow one of the matrix's in the chain to become a master
 * Include a plasma morph routine in the demo library
 * Add a new master demo sketch that can display plasma over multiple matrix’s

@@ -4,7 +4,7 @@
 // Mark Wilson Jul '18
 // v8 David Chao 18-09-11: 
 //    Use lincomatic's Colorduino Library https://github.com/dchao99/Colorduino
-//    Use Adafruit's standard 5x8font
+//    Use Adafruit's classic 5x8font
 //    Allow one of the matrix's in the chain to become a master 
 
 //#define COLORDUINO       // running this code on a Colordurino with a LED matrix?
