@@ -12,7 +12,7 @@
 #include <Wire.h>
 #include "Font5x8.h"
 
-#ifdef ESP8266
+#if defined(ESP8266)
 #include <ESP8266WiFi.h>
 #endif
 #ifdef COLORDUINO
@@ -26,11 +26,11 @@
 // Arduino: Use default SCL and SDA, nothing to do here
 // SCL_PIN = A5, SDA_PIN = A4
 
-#ifdef ESP8266
+#if defined(ESP8266)
 #define SCL_PIN D4
 #define SDA_PIN D3
 #define RST_PIN D2             // connected to DTR on the Colorduino
-#else // Arduino
+#else // Arduino UNO
 #define RST_PIN A0             // connected to DTR on the Colorduino
 #endif
 
@@ -448,7 +448,7 @@ void setup()
   Colorduino.SetWhiteBal(defaultBalances);
 #endif //COLORDUINO
   
-#ifdef ESP8266
+#if defined(ESP8266)
   WiFi.mode( WIFI_OFF );      // Turn off WiFi, we don't need it yet
   WiFi.forceSleepBegin();
   Wire.begin(SDA_PIN, SCL_PIN);
