@@ -34,7 +34,7 @@
 #define RST_PIN A0             // connected to DTR on the Colorduino
 #endif
 
-#define LED_MATRIX_COUNT (1)  // number of LED matrices connected
+#define LED_MATRIX_COUNT (2)  // number of LED matrices connected
 //#define DISPLAY_ROTATED       // if defined, rotates the display 180deg
 
 // I2C address of the LED matrices.  
@@ -247,7 +247,7 @@ void SendDisplay(int matrix)
 #endif //COLORDUINO
 
 #ifdef DEBUG
-    Serial.println("SendDisplay (Remote:"+String(matrix)+")");
+  Serial.println("SendDisplay (Remote:"+String(matrix)+")");
 #endif
   // sends the Display data to the given slave LED matrix
   // uses a colour and bitmasks

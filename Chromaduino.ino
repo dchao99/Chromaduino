@@ -48,19 +48,27 @@
 // v7 Mark Wilson 2018: changed I2C address (was 0x05, non-standard?); added 0x10 & 0x11 commands; ignore white balance if R=0x80
 // v8 David Chao 18-09-11: 
 //    Use lincomatic's Colorduino Library https://github.com/dchao99/Colorduino
-//    Include a plasma morph routine in the demo library
-      
+//    Add a nice plasma morph routine into demo library https://lodev.org/cgtutor/plasma.html
+
 #include <Wire.h>
 #include <Colorduino.h>
 
-#define WIRE_DEVICE_ADDRESS 0x70  // I2C address
 #define DEMO                      // enable demo
+//#define DEBUG                   // enable debug output to console
+
+#ifdef DEMO
+#define LIB8STATIC __attribute__ ((unused)) static inline
+#include "trig8.h"                // Copied from FastLED library 
+#include "gamma8.h"
+#endif
+
+#define WIRE_DEVICE_ADDRESS 0x70  // I2C address
 
 #define MatrixChannels     3
 #define MatrixLeds         ColorduinoScreenHeight*ColorduinoScreenWidth
 #define MatrixRowChannels  ColorduinoScreenWidth*MatrixChannels
 
-byte defaultCorrection[3] = {25, 63, 63};
+byte defaultCorrection[3] = {31, 63, 63};
 
 bool processBalance = false;
 bool balanceRecieved = false;  // true when we've rx'd a white balance command
@@ -75,7 +83,7 @@ byte* fastCommandPtr = NULL;
 bool  processFast = false;
 
 #ifdef DEMO
-unsigned long demoTimeout = 5000UL; // wait 5s after startup with no balance command before running demo.
+unsigned long demoTimeout = 1000UL; // wait 1s after startup with no balance command before running demo.
 unsigned long demoTimestamp;
 // rolling palette:
 unsigned long demoR = 0xFF0000FFUL;
@@ -83,8 +91,13 @@ unsigned long demoG = 0xFF00FF00UL;
 unsigned long demoB = 0xFFFF0000UL;
 unsigned long demoStep = 0;
 // plasma morph:
-unsigned long paletteStart=128000;  // initial seed
-unsigned char plasmaValue=127;      // brightness
+unsigned long timeShift = 128000;   // initial seed
+unsigned char brightness = 192;     // brightness
+// To show off our hardware PWM LED driver (capable of displaying 16M colors) 
+// increase the scaling of the plasma to see more details of the color transition.
+// When using fast sin16(uint_16), need to convert from radians to uint_16 
+// (1 rad = 57.2958 degree).  Default sin() uses radians
+const unsigned int PlasmaScaling = 1043;  // = 57.2958 * 65536 / 360 / (10) <- scaler
 #endif
 
 void wire_Request(void)
@@ -206,6 +219,10 @@ void doFastCommand()
 
 void setup()
 {
+#ifdef DEBUG
+  Serial.begin(115200);
+#endif
+
   // initialize the led matrix controller
   Colorduino.Init();
   Colorduino.SetWhiteBal(defaultCorrection);
@@ -259,8 +276,9 @@ void loop()
         Colorduino.SetWhiteBal(demoCorrection);
       }
         
-      for (int row = 0; row < ColorduinoScreenHeight; row++)
-        for (int col = 0; col < ColorduinoScreenWidth; col++)
+      for (unsigned int row = 0; row < ColorduinoScreenHeight; row++) 
+      {
+        for (unsigned int col = 0; col < ColorduinoScreenWidth; col++)
         {
           if (demoStep < 20)
           {
@@ -271,75 +289,82 @@ void loop()
           }
           else
           {
-            unsigned long shift = paletteStart + demoStep;
-            float value = sin(dist(col + shift, row, 128.0, 128.0) / 8.0) 
-                        + sin(dist(col, row, 64.0, 64.0) / 8.0) 
-                        + sin(dist(col, row + shift / 7, 192.0, 64) / 7.0)
-                        + sin(dist(col, row, 192.0, 100.0) / 8.0);
-            HSVtoRGB( pChannel, (unsigned char)((value) * 128)&0xff );
+            long value = (long)sin16((col+timeShift) * PlasmaScaling) 
+                       + (long)sin16((unsigned int)(dist(col, row, 64, 64) * PlasmaScaling)) 
+                       + (long)sin16((row*PlasmaScaling + timeShift*PlasmaScaling/7) )
+                       + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScaling));
+            //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
+            int hue = (int)(( value*3 ) >> 7);
+#ifdef DEBUG
+            Serial.print(String(hue)+",");
+#endif
+            HSVtoRGB( pChannel, hue, 255, brightness);
           }
           pChannel++;
         }
+#ifdef DEBUG
+        Serial.println();
+#endif
+      }
       Colorduino.FlipPage();
-      demoStep++;
-        
-      if (demoStep <= 20)
+
+      if (demoStep < 20) {
+        demoStep++;
         demoTimeout = 500UL;  // solid color pattern frame delay
-      else
-        demoTimeout = 160UL;  // plasm morphing frame delay
+      } else {
+#ifdef DEBUG
+        Serial.println("-----");
+#endif      
+        timeShift++;
+        demoTimeout = 100UL;  // plasm morphing frame delay
+      }
+
     }
   }
 #endif
 }
 
 #ifdef DEMO
-void HSVtoRGB(void *pChannel, unsigned char hue) 
+// Converts an HSV color to RGB color
+// hue between 0 to +1536
+void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val) 
 {
-  float r, g, b, h, s, v; //this function works with floats between 0 and 1
-  float f, p, q, t;
-  int i;
+  uint8_t  r, g, b;
+  uint16_t s1, v1;
   unsigned char *pRGB = (unsigned char *)pChannel;
 
-  h = (float)(hue / 256.0);
-  s = (float)(255 / 256.0);
-  v = (float)(plasmaValue / 256.0);
-
-  //if saturation is 0, the color is a shade of grey
-  if(s == 0.0) {
-    b = v;
-    g = b;
-    r = g;
+  hue %= 1536;              //between -1535 to +1535
+  if (hue<0) hue += 1536;   //between 0 to +1535
+    
+  uint8_t lo = hue & 255;  // Low byte  = primary/secondary color mix
+  switch(hue >> 8) {       // High byte = sextant of colorwheel
+    case 0 : r = 255     ; g =  lo     ; b =   0     ; break; // R to Y
+    case 1 : r = 255 - lo; g = 255     ; b =   0     ; break; // Y to G
+    case 2 : r =   0     ; g = 255     ; b =  lo     ; break; // G to C
+    case 3 : r =   0     ; g = 255 - lo; b = 255     ; break; // C to B
+    case 4 : r =  lo     ; g =   0     ; b = 255     ; break; // B to M
+    case 5 : r = 255     ; g =   0     ; b = 255 - lo; break; // M to R
+    default: r =   0     ; g =   0     ; b =   0     ; break; // black / dead space
   }
-  //if saturation > 0, more complex calculations are needed
-  else
-  {
-    h *= 6.0; //to bring hue to a number between 0 and 6, better for the calculations
-    i = (int)(floor(h)); //e.g. 2.7 becomes 2 and 3.01 becomes 3 or 4.9999 becomes 4
-    f = h - i;//the fractional part of h
 
-    p = (float)(v * (1.0 - s));
-    q = (float)(v * (1.0 - (s * f)));
-    t = (float)(v * (1.0 - (s * (1.0 - f))));
+  // Saturation: add 1 so range is 1 to 256, allowig a quick shift operation
+  // on the result rather than a costly divide, while the type upgrade to int
+  // avoids repeated type conversions in both directions.
+  s1 = sat + 1;
+  r  = 255 - (((255 - r) * s1) >> 8);
+  g  = 255 - (((255 - g) * s1) >> 8);
+  b  = 255 - (((255 - b) * s1) >> 8);
 
-    switch(i)
-    {
-      case 0: r=v; g=t; b=p; break;
-      case 1: r=q; g=v; b=p; break;
-      case 2: r=p; g=v; b=t; break;
-      case 3: r=p; g=q; b=v; break;
-      case 4: r=t; g=p; b=v; break;
-      case 5: r=v; g=p; b=q; break;
-      default: r = g = b = 0; break;
-    }
-  }
-  *(pRGB++) = (int)(r * 255.0);
-  *(pRGB++) = (int)(g * 255.0);
-  *(pRGB++) = (int)(b * 255.0);
+  // Value (brightness) & 16-bit color reduction: similar to above, add 1
+  // to allow shifts, and upgrade to int makes other conversions implicit.
+  v1 = val + 1;
+  *(pRGB++) = pgm_read_byte(&gamma8[(r*v1)>>8]);
+  *(pRGB++) = pgm_read_byte(&gamma8[(g*v1)>>8]);
+  *(pRGB++) = pgm_read_byte(&gamma8[(b*v1)>>8]);
 }
 
-float dist(float a, float b, float c, float d) 
+float dist(int a, int b, int c, int d) 
 {
   return sqrt((c-a)*(c-a)+(d-b)*(d-b));
 }
 #endif
-
