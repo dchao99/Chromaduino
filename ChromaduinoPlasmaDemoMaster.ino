@@ -10,6 +10,10 @@
 #include <ESP8266WiFi.h>
 #endif
 
+#define LED_MATRIX_COUNT   (2)  // number of LED matrices connected
+#define DISPLAY_ROTATED         // rotates display 180deg from PCB silkscreen orientation
+#include "comm.h"
+
 #define LIB8STATIC __attribute__ ((unused)) static inline
 #include "trig8.h"                // Copied from FastLED library 
 #include "gamma8.h"
@@ -29,23 +33,16 @@
 #define RST_PIN A0             // connected to DTR on the Colorduino
 #endif
 
-#define LED_MATRIX_COUNT (2)   // number of LED matrices connected
-//#define DISPLAY_ROTATED      // if defined, rotates the display 180deg
+#define ColorduinoScreenWidth  (8)
+#define ColorduinoScreenHeight (8)
 
-// I2C address of the LED matrices.  
-// We can use one of the LED matrix's as a master in the chain now  
-// 0x00 = I'm a master-matrix  (position of the master is not important)
-int matrixAddress[] = {0x70, 0x71, 0x72, 0x73, 0x74};
-
-const int matrixBalances[][3] PROGMEM = 
-            {{0x80, 0, 0},   // using 0x80 keeps the default data
-             {0x80, 0, 0},
-             {0x80, 0, 0},
-             {0x80, 0, 0},
-             {0x80, 0, 0}};
+const byte matrixBalances[][3] PROGMEM = 
+           { {35, 55, 63},   // using 0x80 keeps the default data
+             {35, 55, 63},
+             {0x80, 0, 0} };
 
 unsigned long timeShift=128000;     //initial seed
-unsigned char brightness=224;       //brightness
+unsigned char brightness=192;       //brightness
 unsigned long frameTimeout=100UL;   //ms between each frame
 unsigned long frameTimestamp;
 
@@ -55,98 +52,29 @@ unsigned long frameTimestamp;
 // (1 rad = 57.2958 degree).  Default sin() uses radians
 const unsigned int PlasmaScaling = 1043;  // = 57.2958 * 65536 / 360 / (10) <- scaler
 
+// Arrays representing the LEDs we are displaying.
+// this palette is -3072 to +3072, an integer type
+int Display[LED_MATRIX_COUNT][ColorduinoScreenHeight][ColorduinoScreenWidth];
+
 //********** CONFIGURATION ENDS
 
+//********** MATRIX I2C COMM CODE BEGINS
 
-//********** MATRIX MANIPULATION CODE BEGINS
-
-// Arrays representing the LEDs we are displaying.
-// Simple on/off here, but could be palette indices
-int Display[LED_MATRIX_COUNT][8][8];
-
-// The Arduino wire library uses a 32 byte receive buffer, we must not send more 
-// than 32 bytes of data in one packet.  
-byte dataBuffer[32];
-
-int GetMatrixIndex(int matrix)
+bool Configure(int matrix)
 {
-  // returns the index if the given logical LED matrix
-#ifdef DISPLAY_ROTATED    
-  return matrix;
-#else      
-  return LED_MATRIX_COUNT - matrix - 1;
-#endif      
-}
-
-#define GetMatrixAddress(_m) matrixAddress[GetMatrixIndex(_m)]
-
-void StartBuffer(int matrix)
-{
-  // start writing to WRITE
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write((byte)0x00);
-  Wire.endTransmission();
-  delay(1);
-}
-
-void StartFastCmd(int matrix)
-{
-  // start writing to FAST
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write((byte)0x11);
-  Wire.endTransmission();
-  delay(1);
-}
-
-void WriteData(int matrix, byte R, byte G, byte B)
-{
-  // write a triple
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write(R);
-  Wire.write(G);
-  Wire.write(B);
-  Wire.endTransmission();
-  delay(1);
-}
-
-void WriteBuffer(int matrix, byte *pBuf, int count)
-{
-  // must be a multiple of triples
-  count = (count / 3) * 3;
-  if(count >= 3)
-  {
-    if (count > 30) count = 30;
-    Wire.beginTransmission(GetMatrixAddress(matrix));
-    for (int i=0; i<count; i++) {
-      Wire.write( *pBuf++ );
-    }
-    Wire.endTransmission();
-    delay(1);
-  }
-}
-
-bool SetBalance(int matrix)
-{
-  // true if there are 3 bytes in the slave's buffer
-  Wire.requestFrom(GetMatrixAddress(matrix), 1);
-  byte count = 0;
-  if (Wire.available())
-    count = Wire.read();
-    
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write((byte)0x02); // set the 3 bytes to be balance
-  Wire.endTransmission();
-  delay(1);
-  return count == 3;  // the slave got 3 bytes
-}
-
-void ShowBuffer(int matrix)
-{
-  // flip the buffers
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write((byte)0x01);
-  Wire.endTransmission();
-  delay(1);
+  int idx = GetMatrixIndex(matrix);
+  byte balanceRGB[3];
+  balanceRGB[0] = pgm_read_byte(matrixBalances[idx]);
+  balanceRGB[1] = pgm_read_byte(matrixBalances[idx]+1);
+  balanceRGB[2] = pgm_read_byte(matrixBalances[idx]+2);
+#ifdef DEBUG
+    Serial.println("Config ("+String(matrix)+") RGB="+String(balanceRGB[0])+String(balanceRGB[1])+
+                   String(balanceRGB[2]));
+#endif
+  // write the balances to slave, true if got expected response from matrix
+  StartBuffer(matrix);
+  WriteData(matrix, balanceRGB);
+  return SetBalance(matrix);
 }
 
 void SendDisplay(int matrix)
@@ -156,39 +84,26 @@ void SendDisplay(int matrix)
 #endif
   // sends the Display data to the given slave LED matrix
   StartBuffer(matrix);
-  
+
+  // The Arduino wire library uses a 32 byte receive buffer, to prevent overflow,
+  // we must not send more than 32 bytes of data in one packet.  
+  byte dataBuffer[32];
   byte *pRGB = dataBuffer;
-  for (int row = 0; row < 8; row++)
+  for (int row = 0; row < ColorduinoScreenHeight; row++)
   {
-    for (int col = 0; col < 8; col++)
+    for (int col = 0; col < ColorduinoScreenWidth; col++)
     {      
 #ifdef DISPLAY_ROTATED    
-      int hue = Display[matrix][7-row][7-col];
-#else      
       int hue = Display[matrix][row][col];
+#else      
+      int hue = Display[matrix][ColorduinoScreenHeight-1-row][ColorduinoScreenWidth-1-col];
 #endif
       HSVtoRGB( pRGB, hue, 255, brightness);
       pRGB += 3;
     }
     pRGB = dataBuffer;
-    WriteBuffer( matrix, pRGB, 24 );
+    WriteBlock( matrix, pRGB, 24 );
   }
-}
-
-bool Configure(int matrix)
-{
-  int idx = GetMatrixIndex(matrix);
-  byte r = pgm_read_byte(matrixBalances[idx]);
-  byte g = pgm_read_byte(matrixBalances[idx]+1);
-  byte b = pgm_read_byte(matrixBalances[idx]+2);
-
-#ifdef DEBUG
-    Serial.println("Config ("+String(matrix)+")");
-#endif
-  // write the balances to slave, true if got expected response from matrix
-  StartBuffer(matrix);
-  WriteData(matrix, r, g, b);
-  return SetBalance(matrix);
 }
 
 //********** COLOR TOOLS CODE BEGINS
@@ -212,7 +127,7 @@ void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val)
     case 3 : r =   0     ; g = 255 - lo; b = 255     ; break; // C to B
     case 4 : r =  lo     ; g =   0     ; b = 255     ; break; // B to M
     case 5 : r = 255     ; g =   0     ; b = 255 - lo; break; // M to R
-    default: r =   0     ; g =   0     ; b =   0     ; break; // black / dead space
+    default: r =   0     ; g =   0     ; b =   0     ; break; // black
   }
 
   // Saturation: add 1 so range is 1 to 256, allowig a quick shift operation
@@ -248,9 +163,9 @@ void setup()
   WiFi.mode( WIFI_OFF );      //Turn off WiFi, we don't need it yet
   WiFi.forceSleepBegin();
   Wire.begin(SDA_PIN, SCL_PIN);
-#else // Arduino
-  Wire.begin();
 #endif
+
+  Wire.begin();
   
   // reset the board(s)
   pinMode(RST_PIN, OUTPUT);
@@ -258,13 +173,12 @@ void setup()
   delay(1);
   digitalWrite(RST_PIN, HIGH);
 
-  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
-  {
-    // keep trying to set the balance until it's awake
+  // keep trying to set the WhiteBal until all slaves are awake
+  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)   
     do {
       delay(100);
     } while (!Configure(matrix));
-  }
+    
   frameTimestamp = millis();
 }
 
@@ -291,7 +205,7 @@ void loop()
 
     for (int row = 0; row < 8; row++) 
     {
-      for (int col = 0; col < (8*LED_MATRIX_COUNT); col++)
+      for (int col = 0; col < 8*LED_MATRIX_COUNT; col++)
       {
         long value = (long)sin16((col+timeShift) * PlasmaScaling) 
                    + (long)sin16((unsigned int)(dist(col, row, 64, 64) * PlasmaScaling)) 

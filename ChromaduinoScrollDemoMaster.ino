@@ -7,19 +7,27 @@
 //    Use Adafruit's classic 5x8font
 //    Allow one of the matrix's in the chain to become a master 
 
-//#define COLORDUINO       // running this code on a Colordurino with a LED matrix?
+//#define COLORDUINO       // running this code on a Colordurino as master?
 
 #include <Wire.h>
-#include "Font5x8.h"
 
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
 #endif
 #ifdef COLORDUINO
 #include <Colorduino.h>
+#else
+#define ColorduinoScreenWidth  (8)
+#define ColorduinoScreenHeight (8)
 #endif //COLORDUINO
 
-//#define DEBUG
+#define LED_MATRIX_COUNT   (2)  // number of LED matrices connected
+#define DISPLAY_ROTATED         // rotates display 180deg from PCB silkscreen orientation
+#include "comm.h"
+
+#include "Font5x8.h"
+
+#define DEBUG
 
 //********** CONFIGURATION BEGINS
 
@@ -34,27 +42,20 @@
 #define RST_PIN A0             // connected to DTR on the Colorduino
 #endif
 
-#define LED_MATRIX_COUNT (2)  // number of LED matrices connected
-//#define DISPLAY_ROTATED       // if defined, rotates the display 180deg
-
-// I2C address of the LED matrices.  
-// We can use one of the LED matrix's as a master in the chain now  
-// 0x00 = I'm a master-matrix  (position of the master is not important)
 #ifdef COLORDUINO
-int matrixAddress[] = {0x00, 0x70, 0x71, 0x72, 0x73};
-byte defaultBalances[3] = {25, 63, 63};
-#else
-int matrixAddress[] = {0x70, 0x71, 0x72, 0x73, 0x74};
+const byte defaultBalances[3] = {35, 55, 63};
 #endif
-const int matrixBalances[][3] PROGMEM = 
-            {{0x80, 0, 0},   // using 0x80 keeps the default data
+const byte matrixBalances[][3] PROGMEM = 
+           { {0x80, 0, 0},   // using 0x80 keeps the default data
              {0x80, 0, 0},
-             {0x80, 0, 0},
-             {0x80, 0, 0},
-             {0x80, 0, 0}};
+             {0x80, 0, 0} };
              
 unsigned long frameTimeout = 160UL; // (ms) time between each frame
-byte fontColor[3] = {0,15,127};      // font color
+byte fontColor[3] = {0,19,127};     // font color
+
+// Arrays representing the LEDs we are displaying.
+// Note: Simple on/off here, but could be palette indices
+byte Display[LED_MATRIX_COUNT][ColorduinoScreenHeight][ColorduinoScreenWidth];
 
 //********** CONFIGURATION ENDS
 
@@ -117,100 +118,47 @@ bool font_GetCell(unsigned char ch, int row, int col)
   return (col < font.ch_width) ? font_cache[col] & (0x01 << row) : false;
 }
 
-//********** MATRIX MANIPULATION CODE BEGINS
-
-// Arrays representing the LEDs we are displaying.
-// Simple on/off here, but could be palette indices
-byte Display[LED_MATRIX_COUNT][8][8];
-
-
-int GetMatrixIndex(int matrix)
-{
-  // returns the index if the given logical LED matrix
-#ifdef DISPLAY_ROTATED    
-  return matrix;
-#else      
-  return LED_MATRIX_COUNT - matrix - 1;
-#endif      
-}
-
-#define GetMatrixAddress(_m) matrixAddress[GetMatrixIndex(_m)]
-
 void DisplayChar(int matrix, char ch, int width, int row, int col)
 {
   // copies the characters font definition into the Buffer at matrix, row, col  
   for (int r = 0; r < FONT_ROWS; r++)
     for (int c = 0; c < width; c++)
-      if (0 <= (r+row) && (r+row) < 8 && 8*matrix <= (c+col) && (c+col) < 8*(matrix+1))
-        Display[matrix][r+row][(c+col) % 8] = font_GetCell(ch, r, c)?1:0;
+      if (0 <= (r+row) && (r+row) < ColorduinoScreenHeight && 
+          ColorduinoScreenWidth*matrix <= (c+col) && (c+col) < ColorduinoScreenWidth*(matrix+1))
+        Display[matrix][r+row][(c+col)%ColorduinoScreenWidth] = font_GetCell(ch, r, c)?1:0;
 }
 
-void StartBuffer(int matrix)
-{
-  // start writing to WRITE
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write((byte)0x00);
-  Wire.endTransmission();
-  delay(1);
-}
+//********** MATRIX I2C COMM CODE BEGINS
 
-void StartFastCmd(int matrix)
+bool Configure(int matrix)
 {
-  // start writing to FAST
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write((byte)0x11);
-  Wire.endTransmission();
-  delay(1);
-}
-
-void WriteData(int matrix, byte R, byte G, byte B)
-{
-  // write a triple
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write(R);
-  Wire.write(G);
-  Wire.write(B);
-  Wire.endTransmission();
-  delay(1);
-}
-
-bool SetBalance(int matrix)
-{
-  // true if there are 3 bytes in the slave's buffer
-  Wire.requestFrom(GetMatrixAddress(matrix), 1);
-  byte count = 0;
-  if (Wire.available())
-    count = Wire.read();
-    
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write((byte)0x02); // set the 3 bytes to be balance
-  Wire.endTransmission();
-  delay(1);
-  return count == 3;  // the slave got 3 bytes
-}
-
-void ShowBuffer(int matrix)
-{
+  int idx = GetMatrixIndex(matrix);
+  byte balanceRGB[3];
+  balanceRGB[0] = pgm_read_byte(matrixBalances[idx]);
+  balanceRGB[1] = pgm_read_byte(matrixBalances[idx]+1);
+  balanceRGB[2] = pgm_read_byte(matrixBalances[idx]+2);
+  
 #ifdef COLORDUINO
-  if ( GetMatrixAddress(matrix) == 0x00 )
-  {
+  if (GetMatrixAddress(matrix) == 0x00) { 
 #ifdef DEBUG
-    Serial.println("ShowBuffer (Local:"+String(matrix)+")");
+    Serial.println("Config (Local:"+String(matrix)+") RGB="+String(r)+String(g)+String(b));
 #endif
-    // master-matrix, just flip the local read/write buffer
-    Colorduino.FlipPage();
-    return;
+    if (balanceRGB[0] != 0x80) {
+      // master-matrix and cmd = set new color balances   
+      Colorduino.SetWhiteBal(balanceRGB);
+    }
+    return true;
   }
 #endif //COLORDUINO
 
 #ifdef DEBUG
-    Serial.println("ShowBuffer (Remote:"+String(matrix)+")");
+  Serial.println("Config (Remote:"+String(matrix)+") RGB="+String(balanceRGB[0])+String(balanceRGB[1])+
+                 String(balanceRGB[2]));
 #endif
-// flip the buffers
-  Wire.beginTransmission(GetMatrixAddress(matrix));
-  Wire.write((byte)0x01);
-  Wire.endTransmission();
-  delay(1);
+  // write the balances to slave, true if got expected response from matrix
+  StartBuffer(matrix);
+  WriteData(matrix, balanceRGB);
+  return SetBalance(matrix);
 }
 
 void SendDisplay(int matrix)
@@ -218,18 +166,15 @@ void SendDisplay(int matrix)
 #ifdef COLORDUINO
   if ( GetMatrixAddress(matrix) == 0x00 )
   {
-#ifdef DEBUG
-    Serial.println("SendDisplay (Local:"+String(matrix)+")");
-#endif
     // master-matrix, just bitmap to my own LED matrix
     PixelRGB* pChannel = Colorduino.GetPixel(0,0);
-    for (int row = 0; row < 8; row++)
-      for (int col = 0; col < 8; col++)
+    for (int row = 0; row < ColorduinoScreenHeight; row++)
+      for (int col = 0; col < ColorduinoScreenWidth; col++)
       {
 #ifdef DISPLAY_ROTATED    
-        if (Display[matrix][7-row][7-col])
-#else      
         if (Display[matrix][row][col])
+#else   
+        if (Display[matrix][ColorduinoScreenHeight-1-row][ColorduinoScreenWidth-1-col])
 #endif 
         {     
           pChannel->r = fontColor[0];
@@ -246,64 +191,29 @@ void SendDisplay(int matrix)
   }
 #endif //COLORDUINO
 
-#ifdef DEBUG
-  Serial.println("SendDisplay (Remote:"+String(matrix)+")");
-#endif
   // sends the Display data to the given slave LED matrix
   // uses a colour and bitmasks
   StartFastCmd(matrix);
-  byte data[9];
+  byte dataBuffer[9];
   for (int row = 0; row < 8; row++)
   {
-    data[row+1] = 0x00;
+    dataBuffer[row+1] = 0x00;
     for (int col = 0; col < 8; col++)
 #ifdef DISPLAY_ROTATED    
-      if (Display[matrix][7-row][7-col])
-#else      
       if (Display[matrix][row][col])
+#else      
+      if (Display[matrix][ColorduinoScreenHeight-1-row][ColorduinoScreenWidth-1-col])
 #endif      
-        data[row+1] |= 0x01 << col;
+        dataBuffer[row+1] |= 0x01 << col;
   }
   // format the data field for Cmd 0x11 (FAST Write)
   int idx = 0;
-  data[0] = B00000010;  // write black background, DON'T display at end
-  WriteData(matrix, fontColor[0], fontColor[1], fontColor[2]);  // blue foreground
+  dataBuffer[0] = B00000010;  // write black background, DON'T display at end
+  WriteData(matrix, fontColor);  // blue foreground
   for (int i=0; i<3; i++) {
-    WriteData(matrix, data[idx], data[idx+1], data[idx+2]);
+    WriteData(matrix, dataBuffer+idx);
     idx += 3;
   }
-}
-
-bool Configure(int matrix)
-{
-  int idx = GetMatrixIndex(matrix);
-  byte r = pgm_read_byte(matrixBalances[idx]);
-  byte g = pgm_read_byte(matrixBalances[idx]+1);
-  byte b = pgm_read_byte(matrixBalances[idx]+2);
-
-#ifdef COLORDUINO
-  if (GetMatrixAddress(matrix) == 0x00) { 
-#ifdef DEBUG
-    Serial.println("Config (Local:"+String(matrix)+")");
-#endif
-    if (r != 0x80) {
-      // master-matrix and cmd = set new color balances   
-      defaultBalances[0]=r;
-      defaultBalances[1]=g;
-      defaultBalances[2]=b;
-      Colorduino.SetWhiteBal(defaultBalances);
-    }
-    return true;
-  }
-#endif //COLORDUINO
-
-#ifdef DEBUG
-  Serial.println("Config (Remote:"+String(matrix)+")");
-#endif
-  // write the balances to slave, true if got expected response from matrix
-  StartBuffer(matrix);
-  WriteData(matrix, r, g, b);
-  return SetBalance(matrix);
 }
 
 //********** STRING HANDLING AND SCROLLING CODE BEGINS
@@ -319,7 +229,7 @@ int marqueEnd;
 void UpdateDisplay(int matrix)
 {
 #ifdef DEBUG
-  Serial.println("UpdateDisplay (Matrix:"+String(matrix)+")");
+//Serial.println("UpdateDisplay (Matrix:"+String(matrix)+")");
 #endif
   // updates the display of scrolled text
   memset(Display[matrix], 0, sizeof(Display[matrix]));
@@ -337,6 +247,9 @@ void UpdateDisplay(int matrix)
 
 bool ScrollText()
 {
+#ifdef DEBUG
+  Serial.println("Scroll: "+String(marqueWin)+" "+String(marqueEnd));
+#endif
   // shift the text, false if scrolled off
   marqueWin--;
   if (marqueWin < -marqueEnd)
@@ -360,14 +273,18 @@ void UpdateText()
   static const char* const string_table[] = { string_0, string_1, string_2, string_3, string_4, string_5, string_6};
   static int i = 0;
 
-#ifdef DEBUG
-  Serial.println("*** UpdateText ***");
-#endif
   strcpy_P(marqueStr, string_table[i++]); 
-  marqueWin = 8*(LED_MATRIX_COUNT);
+  marqueWin = ColorduinoScreenWidth*LED_MATRIX_COUNT;
 
-  if (i >= sizeof(string_table)/2)
-    i = 0;
+#if defined(ESP8266)
+  if (i >= sizeof(string_table)/4)  i = 0;
+#else
+  if (i >= sizeof(string_table)/2)  i = 0;
+#endif
+
+#ifdef DEBUG
+Serial.println("*** UpdateText ==> "+(String)marqueStr);
+#endif    
 }
 
 //********** COLOR TOOLS CODE BEGINS

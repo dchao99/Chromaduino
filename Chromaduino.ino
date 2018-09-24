@@ -18,7 +18,7 @@
 // 0x00 sets the write pointer to the start of the WRITE buffer.
 // 0x01 swaps the WRITE and READ buffers
 // 0x02 takes the low 6 bits of the first 3 bytes in the WRITE buffer as GLOBAL scalars of the R, G and B values ("colour balance").  
-//       The default is 25, 63, 63.  This downplays the intensity of Red to achieve a reasonable "White"
+//       The default is 35, 55, 63.  This downplays the intensity of Red/Green to achieve a reasonable "White"
 //       If the first byte is 0x80 the command is ignored
 // 0x03 takes the 1st byte in the WRITE buffer as the TCNT2 value, provided the 2nd and 3rd bytes are 16 (clock freq in MHz) and 128 (clock divisor)
 //       TCNT2 drives the timer which updates the LED rows. The default is 99 for a frequency of 800Hz.  
@@ -68,7 +68,7 @@
 #define MatrixLeds         ColorduinoScreenHeight*ColorduinoScreenWidth
 #define MatrixRowChannels  ColorduinoScreenWidth*MatrixChannels
 
-byte defaultCorrection[3] = {31, 63, 63};
+byte defaultCorrection[3] = {35, 55, 63};
 
 bool processBalance = false;
 bool balanceRecieved = false;  // true when we've rx'd a white balance command
@@ -83,12 +83,13 @@ byte* fastCommandPtr = NULL;
 bool  processFast = false;
 
 #ifdef DEMO
-unsigned long demoTimeout = 1000UL; // wait 1s after startup with no balance command before running demo.
+unsigned long demoTimeout = 1000UL; //1s should be long enough to wait the WhiteBal command
+                                    //Note: make sure WhiteBal command is not received in the middle of demo
 unsigned long demoTimestamp;
 // rolling palette:
-unsigned long demoR = 0xFF0000FFUL;
-unsigned long demoG = 0xFF00FF00UL;
-unsigned long demoB = 0xFFFF0000UL;
+unsigned long demoR = 0xFFFF00FFUL;
+unsigned long demoG = 0xFF00FFFFUL;
+unsigned long demoB = 0xFFFFFF00UL;
 unsigned long demoStep = 0;
 // plasma morph:
 unsigned long timeShift = 128000;   // initial seed
@@ -240,7 +241,8 @@ void loop()
 {
   if (processBalance)
   {
-    byte *newCorrection = (byte *)Colorduino.GetPixel(0,0);
+    byte *newCorrection;
+    newCorrection = (byte *)Colorduino.GetPixel(0,0);
     if (newCorrection[0] != 0x80)  // 0x80: skip, use default correction
       Colorduino.SetWhiteBal(newCorrection);
     processBalance = false;
@@ -278,7 +280,8 @@ void loop()
         
       for (unsigned int row = 0; row < ColorduinoScreenHeight; row++) 
       {
-        for (unsigned int col = 0; col < ColorduinoScreenWidth; col++)
+        for (unsigned int col = ColorduinoScreenWidth*(WIRE_DEVICE_ADDRESS&0x0f); 
+             col < ColorduinoScreenWidth*((WIRE_DEVICE_ADDRESS&0x0F)+1); col++)
         {
           if (demoStep < 20)
           {
@@ -344,7 +347,7 @@ void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val)
     case 3 : r =   0     ; g = 255 - lo; b = 255     ; break; // C to B
     case 4 : r =  lo     ; g =   0     ; b = 255     ; break; // B to M
     case 5 : r = 255     ; g =   0     ; b = 255 - lo; break; // M to R
-    default: r =   0     ; g =   0     ; b =   0     ; break; // black / dead space
+    default: r =   0     ; g =   0     ; b =   0     ; break; // black
   }
 
   // Saturation: add 1 so range is 1 to 256, allowig a quick shift operation

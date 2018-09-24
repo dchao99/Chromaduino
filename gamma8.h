@@ -1,8 +1,8 @@
 // A simple gamma look-up-table, stored in Program Memory
 // To access the table, must use: pgm_read_byte()
 
-#ifndef _INC_GAMMA8_H_
-#define _INC_GAMMA8_H_
+#ifndef _INC_COLORDUINO_GAMMA8_H_
+#define _INC_COLORDUINO_GAMMA8_H_
 
 const uint8_t PROGMEM gamma8[] = {
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
