@@ -15,11 +15,11 @@ const int matrixAddress[] = {0x70, 0x71, 0x72};
 int GetMatrixIndex(int matrix)
 {
   // returns the index if the given logical LED matrix
-#ifdef DISPLAY_ROTATED    
+  #ifdef DISPLAY_ROTATED    
   return matrix;
-#else      
+  #else      
   return LED_MATRIX_COUNT - matrix - 1;
-#endif      
+  #endif      
 }
 
 #define GetMatrixAddress(_m) matrixAddress[GetMatrixIndex(_m)]

@@ -59,8 +59,8 @@
 #ifdef DEMO
 #define LIB8STATIC __attribute__ ((unused)) static inline
 #include "trig8.h"                // Copied from FastLED library 
-#include "gamma8.h"
-#endif
+#include "hsv2rgb.h"
+#endif //DEMO
 
 #define WIRE_DEVICE_ADDRESS 0x70  // I2C address
 
@@ -82,10 +82,10 @@ byte  fastCommandBuffer[12];
 byte* fastCommandPtr = NULL;
 bool  processFast = false;
 
-#ifdef DEMO
-unsigned long demoTimeout = 1000UL; //1s should be long enough to wait the WhiteBal command
-                                    //Note: make sure WhiteBal command is not received in the middle of demo
+unsigned long demoTimeout = 1000UL; //5s should be long enough for master to wake up
 unsigned long demoTimestamp;
+
+#ifdef DEMO
 // rolling palette:
 unsigned long demoR = 0xFFFF00FFUL;
 unsigned long demoG = 0xFF00FFFFUL;
@@ -99,7 +99,7 @@ unsigned char brightness = 192;     // brightness
 // When using fast sin16(uint_16), need to convert from radians to uint_16 
 // (1 rad = 57.2958 degree).  Default sin() uses radians
 const unsigned int PlasmaScaling = 1043;  // = 57.2958 * 65536 / 360 / (10) <- scaler
-#endif
+#endif //DEMO
 
 void wire_Request(void)
 {
@@ -220,9 +220,9 @@ void doFastCommand()
 
 void setup()
 {
-#ifdef DEBUG
+  #ifdef DEBUG
   Serial.begin(115200);
-#endif
+  #endif
 
   // initialize the led matrix controller
   Colorduino.Init();
@@ -232,9 +232,7 @@ void setup()
   Wire.onRequest(wire_Request);
   Wire.onReceive(wire_Receive);
   
-#ifdef DEMO
-  demoTimestamp = millis();
-#endif  
+  demoTimestamp = millis();  
 }
 
 void loop()
@@ -259,7 +257,7 @@ void loop()
     processClear = false;
   }
   
-#ifdef DEMO
+  #ifdef DEMO
   else if (!balanceRecieved)
   {
     unsigned long now = millis();
@@ -298,16 +296,16 @@ void loop()
                        + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScaling));
             //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
             int hue = (int)(( value*3 ) >> 7);
-#ifdef DEBUG
+            #ifdef DEBUG
             Serial.print(String(hue)+",");
-#endif
+            #endif
             HSVtoRGB( pChannel, hue, 255, brightness);
           }
           pChannel++;
         }
-#ifdef DEBUG
+        #ifdef DEBUG
         Serial.println();
-#endif
+        #endif
       }
       Colorduino.FlipPage();
 
@@ -315,59 +313,21 @@ void loop()
         demoStep++;
         demoTimeout = 500UL;  // solid color pattern frame delay
       } else {
-#ifdef DEBUG
+        #ifdef DEBUG
         Serial.println("-----");
-#endif      
+        #endif      
         timeShift++;
         demoTimeout = 100UL;  // plasm morphing frame delay
       }
 
     }
   }
-#endif
+  #endif //DEMO
 }
 
 #ifdef DEMO
-// Converts an HSV color to RGB color
-// hue between 0 to +1536
-void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val) 
-{
-  uint8_t  r, g, b;
-  uint16_t s1, v1;
-  unsigned char *pRGB = (unsigned char *)pChannel;
-
-  hue %= 1536;              //between -1535 to +1535
-  if (hue<0) hue += 1536;   //between 0 to +1535
-    
-  uint8_t lo = hue & 255;  // Low byte  = primary/secondary color mix
-  switch(hue >> 8) {       // High byte = sextant of colorwheel
-    case 0 : r = 255     ; g =  lo     ; b =   0     ; break; // R to Y
-    case 1 : r = 255 - lo; g = 255     ; b =   0     ; break; // Y to G
-    case 2 : r =   0     ; g = 255     ; b =  lo     ; break; // G to C
-    case 3 : r =   0     ; g = 255 - lo; b = 255     ; break; // C to B
-    case 4 : r =  lo     ; g =   0     ; b = 255     ; break; // B to M
-    case 5 : r = 255     ; g =   0     ; b = 255 - lo; break; // M to R
-    default: r =   0     ; g =   0     ; b =   0     ; break; // black
-  }
-
-  // Saturation: add 1 so range is 1 to 256, allowig a quick shift operation
-  // on the result rather than a costly divide, while the type upgrade to int
-  // avoids repeated type conversions in both directions.
-  s1 = sat + 1;
-  r  = 255 - (((255 - r) * s1) >> 8);
-  g  = 255 - (((255 - g) * s1) >> 8);
-  b  = 255 - (((255 - b) * s1) >> 8);
-
-  // Value (brightness) & 16-bit color reduction: similar to above, add 1
-  // to allow shifts, and upgrade to int makes other conversions implicit.
-  v1 = val + 1;
-  *(pRGB++) = pgm_read_byte(&gamma8[(r*v1)>>8]);
-  *(pRGB++) = pgm_read_byte(&gamma8[(g*v1)>>8]);
-  *(pRGB++) = pgm_read_byte(&gamma8[(b*v1)>>8]);
-}
-
 float dist(int a, int b, int c, int d) 
 {
   return sqrt((c-a)*(c-a)+(d-b)*(d-b));
 }
-#endif
+#endif //DEMO

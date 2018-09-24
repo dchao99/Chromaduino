@@ -8,7 +8,7 @@
 #include <Wire.h>
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
-#endif
+#endif //ESP8266
 
 #define LED_MATRIX_COUNT   (2)  // number of LED matrices connected
 #define DISPLAY_ROTATED         // rotates display 180deg from PCB silkscreen orientation
@@ -16,9 +16,9 @@
 
 #define LIB8STATIC __attribute__ ((unused)) static inline
 #include "trig8.h"                // Copied from FastLED library 
-#include "gamma8.h"
+#include "hsv2rgb.h"
 
-//#define DEBUG
+#define DEBUG
 
 //********** CONFIGURATION BEGINS
 
@@ -29,9 +29,9 @@
 #define SCL_PIN D4
 #define SDA_PIN D3
 #define RST_PIN D2             // connected to DTR on the Colorduino
-#else // Arduino UNO
+#else  //Arduino UNO
 #define RST_PIN A0             // connected to DTR on the Colorduino
-#endif
+#endif //ESP8266
 
 #define ColorduinoScreenWidth  (8)
 #define ColorduinoScreenHeight (8)
@@ -63,14 +63,16 @@ int Display[LED_MATRIX_COUNT][ColorduinoScreenHeight][ColorduinoScreenWidth];
 bool Configure(int matrix)
 {
   int idx = GetMatrixIndex(matrix);
-  byte balanceRGB[3];
+  byte balanceRGB[4];
   balanceRGB[0] = pgm_read_byte(matrixBalances[idx]);
   balanceRGB[1] = pgm_read_byte(matrixBalances[idx]+1);
   balanceRGB[2] = pgm_read_byte(matrixBalances[idx]+2);
-#ifdef DEBUG
-    Serial.println("Config ("+String(matrix)+") RGB="+String(balanceRGB[0])+String(balanceRGB[1])+
-                   String(balanceRGB[2]));
-#endif
+  balanceRGB[3] = 0;
+  #ifdef DEBUG
+  char ch[8];
+  sprintf(ch, "%06x", *(unsigned long *)balanceRGB);
+  Serial.println("Config ("+String(matrix)+") RGB="+ch);
+  #endif
   // write the balances to slave, true if got expected response from matrix
   StartBuffer(matrix);
   WriteData(matrix, balanceRGB);
@@ -79,9 +81,9 @@ bool Configure(int matrix)
 
 void SendDisplay(int matrix)
 {
-#ifdef DEBUG
-    Serial.println("SendDisplay ("+String(matrix)+")");
-#endif
+  #ifdef DEBUG
+  Serial.println("SendDisplay ("+String(matrix)+")");
+  #endif
   // sends the Display data to the given slave LED matrix
   StartBuffer(matrix);
 
@@ -93,11 +95,11 @@ void SendDisplay(int matrix)
   {
     for (int col = 0; col < ColorduinoScreenWidth; col++)
     {      
-#ifdef DISPLAY_ROTATED    
+      #ifdef DISPLAY_ROTATED    
       int hue = Display[matrix][row][col];
-#else      
+      #else      
       int hue = Display[matrix][ColorduinoScreenHeight-1-row][ColorduinoScreenWidth-1-col];
-#endif
+      #endif
       HSVtoRGB( pRGB, hue, 255, brightness);
       pRGB += 3;
     }
@@ -106,64 +108,19 @@ void SendDisplay(int matrix)
   }
 }
 
-//********** COLOR TOOLS CODE BEGINS
-
-// Converts an HSV color to RGB color
-// hue between 0 to +1536
-void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val) 
-{
-  uint8_t  r, g, b;
-  uint16_t s1, v1;
-  unsigned char *pRGB = (unsigned char *)pChannel;
-
-  hue %= 1536;              //between -1535 to +1535
-  if (hue<0) hue += 1536;   //between 0 to +1535
-    
-  uint8_t lo = hue & 255;  // Low byte  = primary/secondary color mix
-  switch(hue >> 8) {       // High byte = sextant of colorwheel
-    case 0 : r = 255     ; g =  lo     ; b =   0     ; break; // R to Y
-    case 1 : r = 255 - lo; g = 255     ; b =   0     ; break; // Y to G
-    case 2 : r =   0     ; g = 255     ; b =  lo     ; break; // G to C
-    case 3 : r =   0     ; g = 255 - lo; b = 255     ; break; // C to B
-    case 4 : r =  lo     ; g =   0     ; b = 255     ; break; // B to M
-    case 5 : r = 255     ; g =   0     ; b = 255 - lo; break; // M to R
-    default: r =   0     ; g =   0     ; b =   0     ; break; // black
-  }
-
-  // Saturation: add 1 so range is 1 to 256, allowig a quick shift operation
-  // on the result rather than a costly divide, while the type upgrade to int
-  // avoids repeated type conversions in both directions.
-  s1 = sat + 1;
-  r  = 255 - (((255 - r) * s1) >> 8);
-  g  = 255 - (((255 - g) * s1) >> 8);
-  b  = 255 - (((255 - b) * s1) >> 8);
-
-  // Value (brightness) & 16-bit color reduction: similar to above, add 1
-  // to allow shifts, and upgrade to int makes other conversions implicit.
-  v1 = val + 1;
-  *(pRGB++) = pgm_read_byte(&gamma8[(r*v1)>>8]);
-  *(pRGB++) = pgm_read_byte(&gamma8[(g*v1)>>8]);
-  *(pRGB++) = pgm_read_byte(&gamma8[(b*v1)>>8]);
-}
-
-float dist(int a, int b, int c, int d) 
-{
-  return sqrt((c-a)*(c-a)+(d-b)*(d-b));
-}
-
 //********** ARDUINO MAIN CODE BEGINS
 
 void setup()
 {
-#ifdef DEBUG
+  #ifdef DEBUG
   Serial.begin(115200);
-#endif
+  #endif
 
-#if defined(ESP8266)
+  #if defined(ESP8266)
   WiFi.mode( WIFI_OFF );      //Turn off WiFi, we don't need it yet
   WiFi.forceSleepBegin();
   Wire.begin(SDA_PIN, SCL_PIN);
-#endif
+  #endif //ESP8266
 
   Wire.begin();
   
@@ -197,9 +154,9 @@ void loop()
   unsigned long now = millis();
   if (now - frameTimestamp >= frameTimeout)
   {
-#ifdef DEBUG
+    #ifdef DEBUG
     Serial.println("Loop Entry = "+String(now));
-#endif
+    #endif
     // kick plasma morphing animation
     frameTimestamp = now;
 
@@ -213,33 +170,38 @@ void loop()
                    + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScaling));
         //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
         int hue = (int)(( value*3 ) >> 7);
-#ifdef DEBUG
-//      Serial.print(String(hue)+",");
-#endif
+        #ifdef DEBUG
+        //Serial.print(String(hue)+",");
+        #endif
         Display[col/8][row][col%8] =  hue;
       }
-#ifdef DEBUG
-//    Serial.println();
-#endif
+      #ifdef DEBUG
+      //Serial.println();
+      #endif
     }
     timeShift++;
 
-#ifdef DEBUG
+    #ifdef DEBUG
     Serial.println("Before Send = "+String(millis()));
-#endif
+    #endif
     // update the LEDs
     for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
     {
       SendDisplay(matrix);
     }
 
-#ifdef DEBUG
+    #ifdef DEBUG
     Serial.println("After Send = "+String(millis()));
-#endif
+    #endif
     // flip to displaying the new pattern
     for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
     {
       ShowBuffer(matrix);
     }
   }
+}
+
+float dist(int a, int b, int c, int d) 
+{
+  return sqrt((c-a)*(c-a)+(d-b)*(d-b));
 }
