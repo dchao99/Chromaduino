@@ -112,19 +112,19 @@ void SendDisplay(int matrix)
 
 // Original equation from: https://lodev.org/cgtutor/plasma.html
 // const float PlasmaScaling = 10.0; 
-// float value = sin((col+shift) / scaling) + sin(dist(col, row, 64.0, 64.0) / scaling) 
-//             + sin((row+shift/7.0) / scaling) + sin(dist(col, row, 192.0, 100.0) / scaling);
+// float value = sin((col+time) / scaling) + sin(dist(col, row, 64.0, 64.0) / scaling) 
+//             + sin((row+time/7.0) / scaling) + sin(dist(col, row, 192.0, 100.0) / scaling);
 // int hue = (int)(value * 128 * 6); 
 
-void plasma_morph(unsigned long shift)
+void plasma_morph(unsigned long time)
 {
   for (int row = 0; row < 8; row++) 
   {
     for (int col = 0; col < 8*LED_MATRIX_COUNT; col++)
     {
-      long value = (long)sin16((col+shift) * PlasmaScaling) 
+      long value = (long)sin16((col+time) * PlasmaScaling) 
                  + (long)sin16((unsigned int)(dist(col, row, 64, 64) * PlasmaScaling)) 
-                 + (long)sin16((row*PlasmaScaling + shift*PlasmaScaling/7) )
+                 + (long)sin16((row*PlasmaScaling + time*PlasmaScaling/7) )
                  + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScaling));
       //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
       int hue = (int)(( value*3 ) >> 7);
