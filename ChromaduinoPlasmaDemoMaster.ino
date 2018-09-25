@@ -58,7 +58,7 @@ int Display[LED_MATRIX_COUNT][ColorduinoScreenHeight][ColorduinoScreenWidth];
 
 //********** CONFIGURATION ENDS
 
-//********** MATRIX I2C COMM CODE BEGINS
+//********** MATRIX CONFIG AND DISPLAY CODE BEGINS
 
 bool Configure(int matrix)
 {
@@ -110,6 +110,40 @@ void SendDisplay(int matrix)
 
 //********** ARDUINO MAIN CODE BEGINS
 
+// Original equation from: https://lodev.org/cgtutor/plasma.html
+// const float PlasmaScaling = 10.0; 
+// float value = sin((col+shift) / scaling) + sin(dist(col, row, 64.0, 64.0) / scaling) 
+//             + sin((row+shift/7.0) / scaling) + sin(dist(col, row, 192.0, 100.0) / scaling);
+// int hue = (int)(value * 128 * 6); 
+
+void plasma_morph(unsigned long shift)
+{
+  for (int row = 0; row < 8; row++) 
+  {
+    for (int col = 0; col < 8*LED_MATRIX_COUNT; col++)
+    {
+      long value = (long)sin16((col+shift) * PlasmaScaling) 
+                 + (long)sin16((unsigned int)(dist(col, row, 64, 64) * PlasmaScaling)) 
+                 + (long)sin16((row*PlasmaScaling + shift*PlasmaScaling/7) )
+                 + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScaling));
+      //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
+      int hue = (int)(( value*3 ) >> 7);
+      #ifdef DEBUG
+      //Serial.print(String(hue)+",");
+      #endif
+      Display[col/8][row][col%8] =  hue;
+    }
+    #ifdef DEBUG
+    //Serial.println();
+    #endif
+  } 
+}
+
+float dist(int a, int b, int c, int d) 
+{
+  return sqrt((c-a)*(c-a)+(d-b)*(d-b));
+}
+
 void setup()
 {
   #ifdef DEBUG
@@ -139,16 +173,6 @@ void setup()
   frameTimestamp = millis();
 }
 
-/* 
- * Original equation: https://lodev.org/cgtutor/plasma.html
- * const float PlasmaScaling = 10.0; 
- * float value = sin((col+timeShift) / PlasmaScaling) 
- *             + sin(dist(col, row, 64.0, 64.0) / PlasmaScaling) 
- *             + sin((row+timeShift/7.0) / PlasmaScaling)
- *             + sin(dist(col, row, 192.0, 100.0) / PlasmaScaling);
- * //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
- * int hue = (int)(value * 128 * 6); 
- */
 void loop()
 {
   unsigned long now = millis();
@@ -160,26 +184,7 @@ void loop()
     // kick plasma morphing animation
     frameTimestamp = now;
 
-    for (int row = 0; row < 8; row++) 
-    {
-      for (int col = 0; col < 8*LED_MATRIX_COUNT; col++)
-      {
-        long value = (long)sin16((col+timeShift) * PlasmaScaling) 
-                   + (long)sin16((unsigned int)(dist(col, row, 64, 64) * PlasmaScaling)) 
-                   + (long)sin16((row*PlasmaScaling + timeShift*PlasmaScaling/7) )
-                   + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScaling));
-        //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
-        int hue = (int)(( value*3 ) >> 7);
-        #ifdef DEBUG
-        //Serial.print(String(hue)+",");
-        #endif
-        Display[col/8][row][col%8] =  hue;
-      }
-      #ifdef DEBUG
-      //Serial.println();
-      #endif
-    }
-    timeShift++;
+    plasma_morph(timeShift++);
 
     #ifdef DEBUG
     Serial.println("Before Send = "+String(millis()));
@@ -199,9 +204,4 @@ void loop()
       ShowBuffer(matrix);
     }
   }
-}
-
-float dist(int a, int b, int c, int d) 
-{
-  return sqrt((c-a)*(c-a)+(d-b)*(d-b));
 }

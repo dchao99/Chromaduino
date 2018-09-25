@@ -129,7 +129,7 @@ void DisplayChar(int matrix, char ch, int width, int row, int col)
         Display[matrix][r+row][(c+col)%ColorduinoScreenWidth] = font_GetCell(ch, r, c)?1:0;
 }
 
-//********** MATRIX I2C COMM CODE BEGINS
+//********** MATRIX CONFIG AND DISPLAY CODE BEGINS
 
 bool Configure(int matrix)
 {
