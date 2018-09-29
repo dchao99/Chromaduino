@@ -51,9 +51,11 @@ const byte matrixBalances[][3] PROGMEM =
              {0x80, 0, 0},
              {0x80, 0, 0} };
              
-unsigned long frameTimeout = 160UL; // (ms) time between each frame
-byte fontColor[3] = {0,19,127};     // font color
+byte fontColor[3] = {0,19,127};   //font color {r,g,b}
 
+unsigned int frameTimeout = 160;  //(ms) between each frame
+unsigned long frameTimestamp;     //frame timer
+    
 // Arrays representing the LEDs we are displaying.
 // Note: Simple on/off here, but could be palette indices
 byte Display[LED_MATRIX_COUNT][ColorduinoScreenHeight][ColorduinoScreenWidth];
@@ -134,16 +136,15 @@ void DisplayChar(int matrix, char ch, int width, int row, int col)
 bool Configure(int matrix)
 {
   int idx = GetMatrixIndex(matrix);
-  byte balanceRGB[4];
+  byte balanceRGB[3];
   balanceRGB[0] = pgm_read_byte(matrixBalances[idx]);
   balanceRGB[1] = pgm_read_byte(matrixBalances[idx]+1);
   balanceRGB[2] = pgm_read_byte(matrixBalances[idx]+2);
-  balanceRGB[3] = 0;
   #ifdef COLORDUINO
   if (GetMatrixAddress(matrix) == 0x00) { 
     #ifdef DEBUG
     char ch[8];
-    sprintf(ch, "%06x", *(unsigned long *)balanceRGB);
+    sprintf(ch, "%02x%02x%02x", balanceRGB[0], balanceRGB[1], balanceRGB[2]);
     Serial.println("Config (Local:"+String(matrix)+") RGB="+ch);
     #endif
     if (balanceRGB[0] != 0x80) {
@@ -156,7 +157,7 @@ bool Configure(int matrix)
 
   #ifdef DEBUG
   char ch[8];
-  sprintf(ch, "%06x", *(unsigned long *)balanceRGB);
+  sprintf(ch, "%02x%02x%02x", balanceRGB[0], balanceRGB[1], balanceRGB[2]);
   Serial.println("Config (Remote:"+String(matrix)+") RGB="+ch);
   #endif
   // write the balances to slave, true if got expected response from matrix
@@ -344,6 +345,9 @@ void setup()
 {
   #ifdef DEBUG
   Serial.begin(115200);
+  delay(10);
+  Serial.println();
+  Serial.println();
   #endif
   
   // Read font properties
@@ -383,51 +387,45 @@ void setup()
   delay(1);
   digitalWrite(RST_PIN, HIGH);
 
+  // keep trying to set the balance until until all slaves are awake
   for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
   {
-    // keep trying to set the balance until it's awake
-    do {
-      delay(100);
-    } while (!Configure(matrix));
+    do delay(100); while (!Configure(matrix));
   }
   UpdateText();
+  frameTimestamp = millis() - 5000;   //guarentee first frame is displayed immediately
 }
 
 void loop()
 {
-  static unsigned long frameTimestamp = 0;
-  
-  if (frameTimestamp == 0)
-    frameTimestamp = millis() - 1000;  // guarentees first frame is displayed immediately
-    
-  // update the LEDs
-  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
-  {
-    SendDisplay(matrix);
-  }
-  
-  // wait until the next time frame
-  long frameDelay = (long)frameTimeout - (long)(millis() - frameTimestamp);
-  if (frameDelay > 0) 
-    delay(frameDelay);
-  frameTimestamp = millis();
+  unsigned long now = millis();
 
-  // flip to displaying the new pattern
-  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
+  if (now - frameTimestamp >= frameTimeout)
   {
-    ShowBuffer(matrix);
-  }
+    #ifdef DEBUG
+    Serial.println("New frame = "+String(now));
+    #endif
+    frameTimestamp = now;
 
-  // update the display with the scrolled text
-  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
-  {
-    UpdateDisplay(matrix);
-  }
+    // update the LEDs
+    for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++) {
+      SendDisplay(matrix);
+    }
 
-  // scroll the text left
-  if (!ScrollText())
-  {
-    // scrolled off: new text
-    UpdateText();
+    // flip to displaying the new pattern
+    for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++) {
+      ShowBuffer(matrix);
+    }
+
+    // update the display with the scrolled text
+    for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++) {
+      UpdateDisplay(matrix);
+    }
+
+    // scroll the text left
+    if (!ScrollText()) {
+      // scrolled off: new text
+      UpdateText();
+    }
   }
 }

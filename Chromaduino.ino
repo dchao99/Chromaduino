@@ -68,7 +68,7 @@
 #define MatrixLeds         ColorduinoScreenHeight*ColorduinoScreenWidth
 #define MatrixRowChannels  ColorduinoScreenWidth*MatrixChannels
 
-byte defaultCorrection[3] = {35, 55, 63};
+byte defaultCorrection[3] = {55, 63, 63};
 
 bool processBalance = false;
 bool balanceRecieved = false;  // true when we've rx'd a white balance command
@@ -82,7 +82,7 @@ byte  fastCommandBuffer[12];
 byte* fastCommandPtr = NULL;
 bool  processFast = false;
 
-unsigned long demoTimeout = 1000UL; //5s should be long enough for master to wake up
+unsigned long demoTimeout = 5000UL; //5s should be long enough for master to wake up
 unsigned long demoTimestamp;
 
 #ifdef DEMO
@@ -98,7 +98,7 @@ unsigned char brightness = 192;     // brightness
 // increase the scaling of the plasma to see more details of the color transition.
 // When using fast sin16(uint_16), need to convert from radians to uint_16 
 // (1 rad = 57.2958 degree).  Default sin() uses radians
-const unsigned int PlasmaScaling = 1043;  // = 57.2958 * 65536 / 360 / (10) <- scaler
+const unsigned int PlasmaScale = 1043;  // = 57.2958 * 65536 / 360 / (10) <- scaler
 #endif //DEMO
 
 void wire_Request(void)
@@ -222,6 +222,9 @@ void setup()
 {
   #ifdef DEBUG
   Serial.begin(115200);
+  delay(10);
+  Serial.println();
+  Serial.println();
   #endif
 
   // initialize the led matrix controller
@@ -290,10 +293,10 @@ void loop()
           }
           else
           {
-            long value = (long)sin16((col+timeShift) * PlasmaScaling) 
-                       + (long)sin16((unsigned int)(dist(col, row, 64, 64) * PlasmaScaling)) 
-                       + (long)sin16((row*PlasmaScaling + timeShift*PlasmaScaling/7) )
-                       + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScaling));
+            long value = (long)sin16((col+timeShift) * PlasmaScale) 
+                       + (long)sin16((unsigned int)(dist(col, row, 64, 64) * PlasmaScale)) 
+                       + (long)sin16((row*PlasmaScale + timeShift*PlasmaScale/7) )
+                       + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScale));
             //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
             int hue = (int)(( value*3 ) >> 7);
             #ifdef DEBUG
@@ -317,7 +320,7 @@ void loop()
         Serial.println("-----");
         #endif      
         timeShift++;
-        demoTimeout = 100UL;  // plasm morphing frame delay
+        demoTimeout = 120UL;  // plasm morphing frame delay
       }
 
     }
