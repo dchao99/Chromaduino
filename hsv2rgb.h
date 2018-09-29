@@ -36,13 +36,14 @@ void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val)
   if (hue<0) hue += 1536;   //between 0 to +1535
     
   uint8_t lo = hue & 255;   // Low byte  = primary/secondary color mix
-  //note: make yellows more prominent by extending the reds
+  
+  //note: make yellows more prominent by extending the reds in case_1
   switch(hue >> 8) {       // High byte = sextant of colorwheel
     case 0 : r = 255     ; g = lo      ; b =   0     ; break; // R to Y
     case 1 :               g = 255     ; b =   0     ;        // Y to G
-             r = 255 - (((uint16_t)lo*3) >> 2 & 255) ; break; // extending R
+             r = 255 - (((uint16_t)lo*2)/3 & 255)    ; break; // extending R
     case 2 :               g = 255     ; b =  lo     ;        // G to C
-             r = (255-lo) >> 2                       ; break;
+             r = (255-lo)/3                          ; break;
     case 3 : r =   0     ; g = 255 - lo; b = 255     ; break; // C to B
     case 4 : r =  lo     ; g =   0     ; b = 255     ; break; // B to M
     case 5 : r = 255     ; g =   0     ; b = 255 - lo; break; // M to R
