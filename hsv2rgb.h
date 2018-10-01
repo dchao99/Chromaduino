@@ -24,12 +24,12 @@ const uint8_t PROGMEM gamma8[] = {
   
 //********** COLOR TOOLS CODE BEGINS
 
-//Modifications to standard hue to RGB conversion:
-// increase red by lowering green (0-120deg)
+//Rainbow spectrum pallete
 // increase yellow by boosting red (60-120deg)
 // reduce cyan by lower blue (120-240deg)
 // increase indigo by lowering red and blue (240-360deg)
-  
+// increase red by lowering green (0-120deg)
+
 // Converts an HSV color to RGB color
 // hue between 0 to +1536
 void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val) 
