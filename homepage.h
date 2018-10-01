@@ -34,7 +34,7 @@ function ledEffect () {
 }</script></head>
 <body><center><h2>LED Matrix Control:</h2>
 <table><tr>
-<td>V: </td><td><input id="v" type="range" min="32" max="255" step="1" value=")rawliteral";
+<td>V: </td><td><input id="v" type="range" min="08" max="255" step="1" value=")rawliteral";
 
 const char PROGMEM index_2[] = R"rawliteral(" oninput="sendInput();" /></td></tr>
 <td>S: </td><td><input id="s" type="range" min="60" max="255" step="1" value=")rawliteral";

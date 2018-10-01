@@ -87,9 +87,9 @@ unsigned long demoTimestamp;
 
 #ifdef DEMO
 // rolling palette:
-unsigned long demoR = 0xFFFF00FFUL;
-unsigned long demoG = 0xFF00FFFFUL;
-unsigned long demoB = 0xFFFFFF00UL;
+unsigned long demoR = 0xFF0000FFUL;
+unsigned long demoG = 0xFF00FF00UL;
+unsigned long demoB = 0xFFFF0000UL;
 unsigned long demoStep = 0;
 // plasma morph:
 unsigned long timeShift = 128000;   // initial seed

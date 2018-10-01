@@ -24,6 +24,12 @@ const uint8_t PROGMEM gamma8[] = {
   
 //********** COLOR TOOLS CODE BEGINS
 
+//Modifications to standard hue to RGB conversion:
+// increase red by lowering green (0-120deg)
+// increase yellow by boosting red (60-120deg)
+// reduce cyan by lower blue (120-240deg)
+// increase indigo by lowering red and blue (240-360deg)
+  
 // Converts an HSV color to RGB color
 // hue between 0 to +1536
 void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val) 
@@ -34,20 +40,20 @@ void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val)
 
   hue %= 1536;              //between -1535 to +1535
   if (hue<0) hue += 1536;   //between 0 to +1535
-    
+
   uint8_t lo = hue & 255;   // Low byte  = primary/secondary color mix
-  
-  //note: make yellows more prominent by extending the reds in case_1
-  switch(hue >> 8) {       // High byte = sextant of colorwheel
-    case 0 : r = 255     ; g = lo      ; b =   0     ; break; // R to Y
-    case 1 :               g = 255     ; b =   0     ;        // Y to G
-             r = 255 - (((uint16_t)lo*2)/3 & 255)    ; break; // extending R
-    case 2 :               g = 255     ; b =  lo     ;        // G to C
-             r = (255-lo)/3                          ; break;
-    case 3 : r =   0     ; g = 255 - lo; b = 255     ; break; // C to B
-    case 4 : r =  lo     ; g =   0     ; b = 255     ; break; // B to M
-    case 5 : r = 255     ; g =   0     ; b = 255 - lo; break; // M to R
-    default: r =   0     ; g =   0     ; b =   0     ; break; // black
+  uint8_t inv = 255 - lo;
+  switch(hue >> 8) {        // High byte = sextant of colorwheel
+    case 0 : r = 255     ;             ; b =   0         ;         // R to Y
+             g = (uint16_t)lo*7>>3 & 255                 ; break ;
+    case 1 : g = 255-(inv>>3)          ; b =   0         ;         // Y to G
+             r = 255 - ((uint16_t)lo*3>>2 & 255)         ; break ;
+    case 2 : r = inv>>2  ; g = 255     ; b =   0         ; break ; // G to C
+    case 3 : r =   0     ; g = inv     ; b = lo          ; break ; // C to B
+    case 4 : r = lo>>1   ; g =   0     ; b = 255-(lo>>1) ; break ; // B to M
+    case 5 :             ; g =   0     ; b = inv>>1      ;         // M to R
+             r = 255-(inv>>1)                            ; break ;
+    default: r =   0     ; g =   0     ; b =   0         ; break ; // black
   }
 
   // Saturation: add 1 so range is 1 to 256, allowig a quick shift operation
@@ -62,11 +68,8 @@ void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val)
   // to allow shifts, and upgrade to int makes other conversions implicit.
   //v1 = val + 1;
   v1 = pgm_read_byte(&gamma8[val]) + 1;
-  *(pRGB++) = pgm_read_byte(&gamma8[(r*v1)>>8]);
-  *(pRGB++) = pgm_read_byte(&gamma8[(g*v1)>>8]);
-  *(pRGB++) = pgm_read_byte(&gamma8[(b*v1)>>8]);
-  //*(pRGB++) = (r*v1)>>8;
-  //*(pRGB++) = (g*v1)>>8;
-  //*(pRGB++) = (b*v1)>>8;
+  *(pRGB++) = (r*v1) >> 8;
+  *(pRGB++) = (g*v1) >> 8;
+  *(pRGB++) = (b*v1) >> 8;
 }
   #endif
