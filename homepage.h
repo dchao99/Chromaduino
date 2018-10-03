@@ -37,7 +37,7 @@ function ledEffect () {
 <td>V: </td><td><input id="v" type="range" min="24" max="255" step="1" value=")rawliteral";
 
 const char PROGMEM index_2[] = R"rawliteral(" oninput="sendInput();" /></td></tr>
-<td>S: </td><td><input id="s" type="range" min="60" max="255" step="1" value=")rawliteral";
+<td>S: </td><td><input id="s" type="range" min="40" max="255" step="1" value=")rawliteral";
 
 const char PROGMEM index_3[] = R"rawliteral(" oninput="sendInput();" /></td></tr></table><br/>
 <button id="effect" class="button" style="background-color:#999" onclick="ledEffect();">Effect</button><br/><br/>

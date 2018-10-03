@@ -58,11 +58,10 @@ void WriteBlock(int matrix, byte *pBuf, int count)
   count = (count / 3) * 3;
   if(count >= 3)
   {
-    if (count > 30) count = 30;
+    if (count > 30) 
+      count = 30;
     Wire.beginTransmission(GetMatrixAddress(matrix));
-    for (int i=0; i<count; i++) {
-      Wire.write( *pBuf++ );
-    }
+    Wire.write( pBuf, count );
     Wire.endTransmission();
     delay(1);
   }

@@ -12,6 +12,7 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
+#include "homepage.h"
 #endif //ESP8266
 
 #define LED_MATRIX_COUNT   (2)  // number of LED matrices connected
@@ -20,28 +21,27 @@
 
 #define LIB8STATIC __attribute__ ((unused)) static inline
 #include "trig8.h"              // Copied from FastLED library 
-
 #include "hsv2rgb.h"
-#include "homepage.h"
 
 //#define DEBUG
 
-// Choose one special effect, only one effect for now
+// Choose one special effect, only ONE effect right now
 #define EFFECT_DEEPSLEEP
-//#define EFFECT_PLASMA
 
 //********** CONFIGURATION BEGINS
 
 // Arduino: Use default SCL and SDA, nothing to do here
-// SCL_PIN = A5, SDA_PIN = A4
+// ESP8266: SCL_PIN = A5, SDA_PIN = A4
 
 #if defined(ESP8266)
 #define SCL_PIN D4
 #define SDA_PIN D3
-#define RST_PIN D2             // connected to DTR on the Colorduino
+#define RST_PIN D2              // D2 connected to DTR on the Colorduino
 #else  //Arduino UNO
-#define RST_PIN A0             // connected to DTR on the Colorduino
+#define RST_PIN A0              // A0 connected to DTR on the UNO
 #endif //ESP8266
+
+#define WIRE_BUS_SPEED 400000L  // I2C Bus Speed = 400kHz
 
 #define ColorduinoScreenWidth  (8)
 #define ColorduinoScreenHeight (8)
@@ -77,10 +77,12 @@ int Display[LED_MATRIX_COUNT][ColorduinoScreenHeight][ColorduinoScreenWidth];
 const char* ssid     = "San Leandro";   // your wireless network name (SSID)
 const char* password = "nintendo";      // your Wi-Fi network password
 
+#if defined(ESP8266)
 // Initialize network class objects
 ESP8266WebServer server(80);
 WebSocketsServer webSocket(81);
 ESP8266HTTPUpdateServer httpUpdater;
+#endif //ESP8266
 
 //********** CONFIGURATION ENDS
 
@@ -109,10 +111,11 @@ void SendDisplay(int matrix)
   // sends the Display data to the given slave LED matrix
   StartBuffer(matrix);
 
-  // The Arduino wire library uses a 32 byte receive buffer, to prevent overflow,
-  // we must not send more than 32 bytes of data in one packet.  
+  // The Arduino wire library uses 32-byte buffer, to prevent overflow,
+  // we must not send more than 32 bytes in one packet.  
   byte dataBuffer[32];
   byte *pRGB = dataBuffer;
+  int c = 0;
   for (int row = 0; row < ColorduinoScreenHeight; row++)
   {
     for (int col = 0; col < ColorduinoScreenWidth; col++)
@@ -124,14 +127,22 @@ void SendDisplay(int matrix)
       #endif
       HSVtoRGB( pRGB, hue, 255, brightness);
       pRGB += 3;
+      if (++c >= 10) {
+        pRGB = dataBuffer;
+        WriteBlock( matrix, pRGB, 30 );
+        c = 0;
+      }
     }
+  }
+  if (c > 0)  {
     pRGB = dataBuffer;
-    WriteBlock( matrix, pRGB, 24 );
+    WriteBlock( matrix, pRGB, c*3 );
   }
 }
 
 //********** WEB SERVER AND WEB SOCKET CODE BEGINS
 
+#if defined(ESP8266)
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) 
 {
   switch(type) {
@@ -167,7 +178,6 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       break;
   }
 }
-
 
 void startWiFi()
 {
@@ -210,6 +220,7 @@ void startServer()
   
   server.begin();
 }
+#endif //ESP8266
 
 //********** ARDUINO MAIN CODE BEGINS
 
@@ -254,9 +265,32 @@ void setup()
   delay(10);
   Serial.println();
   Serial.println();
+  #if defined(ESP8266)
   Serial.setDebugOutput(false);  // Use extra debugging details?
-  #endif
+  #endif //ESP8266
+  #endif //DEBUG
 
+  // Initialise I2C
+  #if defined(ESP8266)
+  Wire.begin(SDA_PIN, SCL_PIN);
+  #else //Arduino UNO
+  Wire.begin();
+  #endif //ESP8266
+  Wire.setClock(WIRE_BUS_SPEED);
+
+  // reset the board(s)
+  pinMode(RST_PIN, OUTPUT);
+  digitalWrite(RST_PIN, LOW);
+  delay(1);
+  digitalWrite(RST_PIN, HIGH);
+
+  // keep trying to set the WhiteBal until all slaves are awake
+  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++) 
+  {
+    do delay(100); while (!Configure(matrix));
+  }
+
+  #if defined(ESP8266)
   // Make up new hostname from our Chip ID (The MAC addr)
   // Note: Max length for hostString is 32, increase array if hostname is longer
   char hostString[16] = {0};
@@ -280,21 +314,7 @@ void setup()
     Serial.println("MDNS responder started");
     #endif
   }
-    
-  Wire.begin(SDA_PIN, SCL_PIN);
-
-  // reset the board(s)
-  pinMode(RST_PIN, OUTPUT);
-  digitalWrite(RST_PIN, LOW);
-  delay(1);
-  digitalWrite(RST_PIN, HIGH);
-
-  // keep trying to set the WhiteBal until all slaves are awake
-  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++) 
-  {
-    do delay(100); while (!Configure(matrix));
-  }
-  
+     
   startServer();
 
   // Add service to MDNS
@@ -303,48 +323,54 @@ void setup()
   #ifdef DEBUG
   Serial.printf("HTTPServer ready! Open http://%s.local in your browser\n", hostString);
   Serial.printf("HTTPUpdateServer ready! Open http://%s.local/update in your browser\n", hostString);
-  #endif
+  #endif //DEBUG
+  #endif //ESP8266
 
   frameTimestamp = lastPatchTime = millis();
 }
 
 void loop()
 {
-  webSocket.loop();       // network housekeeping
+  #if defined(ESP8266)
+  // web server housekeeping
+  webSocket.loop();
   server.handleClient();
+  #endif //ESP8266
   
   unsigned long now = millis();
-  
+
+  #if defined(ESP8266)
   if ( now - lastPatchTime >= WebPatchInterval ) {
     #ifdef DEBUG
-    //Serial.println("Patch web page = "+String(now));
+    Serial.println("Patch web page = "+String(now));
     #endif
     lastPatchTime = now;
     patchHomePage(homeString, *(unsigned long*)webData);
   }
+  #endif //ESP8266
   
   if (now - frameTimestamp >= frameTimeout )
   {
     #ifdef DEBUG
-    //Serial.println("New frame = "+String(now));
+    Serial.println("New frame = "+String(now));
     #endif
     frameTimestamp = now;
 
     // kick plasma morphing animation
     plasma_morph(timeShift++);
-
     #ifdef DEBUG
-    //Serial.println("Before Send = "+String(millis()));
+    Serial.println("End of Plasma = "+String(millis()));
     #endif
+
     // update the LEDs
     for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
     {
       SendDisplay(matrix);
     }
-
     #ifdef DEBUG
-    //Serial.println("After Send = "+String(millis()));
+    Serial.println("End of Send = "+String(millis()));
     #endif
+    
     // flip to displaying the new pattern
     for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
     {
@@ -378,4 +404,4 @@ void effectAllLedOff()
   for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
     ShowBuffer(matrix);
 }
-#endif
+#endif //EFFECT_DEEPSLEEP 
