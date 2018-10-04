@@ -51,12 +51,12 @@ const byte matrixBalances[][3] PROGMEM =
              {63, 63, 63},
              {0x80, 0, 0} };  // using 0x80 keeps the default data
 
-unsigned long timeShift=128000;    //initial seed
+unsigned long timeShift=3600000;   //initial seed
 #define brightness   webData[0]    //brightness <- set from web page
 #define frameTimeout webData[1]    //(ms/2) between each frame <- set from web page
 unsigned long frameTimestamp;      //frame timer
-const unsigned int WebPatchInterval=2000;  //2 sec, webpage patching interval 
 unsigned long lastPatchTime;       //webpage patching timer
+const unsigned int WebPatchInterval=2000;  //2 seconds
 
 // web socket variables
 byte   webData[4] = {180,120};   // [0]=Value, [1]=Speed, [2][3] not used

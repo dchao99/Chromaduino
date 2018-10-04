@@ -24,9 +24,9 @@ const uint8_t PROGMEM gamma8[] = {
   
 //********** COLOR TOOLS CODE BEGINS
 
-//Rainbow spectrum pallete tweaks:
-//more yellow: boosting/extend red, and reduce green
-//more indigo: reduce blue
+//Rainbow palette tweaks:
+//more yellow: boosting/extend red, and reduce green (0-180deg)
+//more indigo/violet and less magenta: reduce blue (240-300deg)
 
 // Converts an HSV color to RGB color
 // hue between 0 to +1536
@@ -42,16 +42,15 @@ void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val)
   uint8_t lo = hue & 255;   // Low byte  = primary/secondary color mix
   uint8_t inv = 255 - lo;
   switch(hue >> 8) {        // High byte = sextant of colorwheel
-    case 0 : r = 255         ; g = lo>>1       ; b =   0       ; break ; // R to Y
-    case 1 : r = 255-(lo>>2) ; g = 191-(inv>>2); b =   0       ; break ; // Y to G
-    case 2 :                 ; g = 191         ; b =   0       ;         // G to C
-             r = (uint16_t)inv*3>>2 & 255                      ; break ; 
-    case 3 : r =   0         ; g = (uint16_t)inv*3>>2 & 255    ;         // C to B
-             b = 191-g       ;                 ;               ; break ;
-    case 4 : r = lo>>1       ; g =   0         ; b = 191       ; break ; // B to M
-    case 5 : r = 255-(inv>>1); g =   0         ;               ;         // M to R
-             b = (uint16_t)inv*3>>2 & 255      ;               ; break ; 
-    default: r =   0         ; g =   0         ; b =   0       ; break ; // black
+    case 0 : r = 255         ; g = lo>>1       ; b =   0        ; break ; // R to Y
+    case 1 : r = 255-(lo>>2) ; g = 191-(inv>>2); b =   0        ; break ; // Y to G
+    case 2 :                 ; g = 191         ; b =   0        ;         // G to C
+             r = (uint16_t)inv*3>>2 & 255                       ; break ; 
+    case 3 : r =   0         ; g = (uint16_t)inv*3>>2 & 255     ;         // C to B
+             b = 191-g       ;                 ;                ; break ;
+    case 4 : r = lo>>1       ; g =   0         ; b = 191-(lo>>2); break ; // B to M
+    case 5 : r = 255-(inv>>1); g =   0         ; b = inv>>1     ; break ; // M to R
+    default: r =   0         ; g =   0         ; b =   0        ; break ; // black
   }
 
   // Saturation: add 1 so range is 1 to 256, allowig a quick shift operation
