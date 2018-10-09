@@ -328,15 +328,17 @@ void handleScroll()
     message += marqueStr;
     message += "\n";
   }
-  server.send(200, "text/plain", message);
 
+  server.send(200, "text/plain", message);
   DEBUG_PRINT(message);
 
-  marqueWin = ColorduinoScreenWidth*MatrixCount;
-  prev_delay = frame_delay;
-  frame_delay = defaultScrollSpeed;   //reset timer to the text scrolling speed
-  frameTimestamp -= 5000;             //guarentee first frame is displayed immediately
-  currentMode = SCROLLING; 
+  if (marqueStr[0] != 0) {
+    marqueWin = ColorduinoScreenWidth*MatrixCount;
+    prev_delay = frame_delay;
+    frame_delay = defaultScrollSpeed;   //reset timer to the text scrolling speed
+    frameTimestamp -= 5000;             //guarentee first frame is displayed immediately
+    currentMode = SCROLLING;
+  }
 }
 
 void handleNotFound() {
