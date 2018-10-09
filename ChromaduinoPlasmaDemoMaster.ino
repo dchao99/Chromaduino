@@ -313,7 +313,34 @@ void handleRoot()
 
 void handleScroll() 
 { 
-  String message = "Scrolling Display\n\n";
+  String message = "Scrolling Display\n";
+
+  marqueStr[0] = 0;
+  for (uint8_t i = 0; i < server.args(); i++) {
+    String s1 = server.argName(i);
+    String s2 = server.arg(i);
+    if (s1 == "text")
+      strcpy(marqueStr, s2.c_str()); 
+  }
+
+  if (marqueStr[0] != 0) {
+    message += "Text: ";
+    message += marqueStr;
+    message += "\n";
+  }
+  server.send(200, "text/plain", message);
+
+  DEBUG_PRINT(message);
+
+  marqueWin = ColorduinoScreenWidth*MatrixCount;
+  prev_delay = frame_delay;
+  frame_delay = defaultScrollSpeed;   //reset timer to the text scrolling speed
+  frameTimestamp -= 5000;             //guarentee first frame is displayed immediately
+  currentMode = SCROLLING; 
+}
+
+void handleNotFound() {
+  String message = "File Not Found\n\n";
   message += "URI: ";
   message += server.uri();
   message += "\nMethod: ";
@@ -322,44 +349,22 @@ void handleScroll()
   message += server.args();
   message += "\n";
 
-  marqueStr[0] = 0;
   for (uint8_t i = 0; i < server.args(); i++) {
-    String s1 = server.argName(i);
-    String s2 = server.arg(i);
-    message += " " + s1 + ": " + s2 + "\n";
-    if (s1 == "text")
-      strcpy(marqueStr, s2.c_str()); 
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
   }
-
-  DEBUG_PRINT(message+"\n");
-    
-  if (marqueStr[0] != 0) {
-    message += "\nText found: ";
-    message += marqueStr;
-    message += "\n";
-  }
-  server.send(200, "text/plain", message);
- 
-  marqueWin = ColorduinoScreenWidth*MatrixCount;
-  prev_delay = frame_delay;
-  frame_delay = defaultScrollSpeed;   //reset timer to the text scrolling speed
-  frameTimestamp -= 5000;             //guarentee first frame is displayed immediately
-  currentMode = SCROLLING; 
+  server.send(404, "text/plain", message);
 }
 
 void startServer()
 {
   homeString = constructHomePage(*(unsigned long*)webData);
-
-  // handle homepage
-  server.on("/", handleRoot);
-
-  // start scrolling text
-  server.on("/scroll", handleScroll);
-    
-  // update firmware
-  httpUpdater.setup(&server);
   
+  server.on("/", handleRoot);         // handle homepage
+  server.on("/scroll", handleScroll); // start scrolling text
+  server.onNotFound(handleNotFound);  // error handler  
+
+  httpUpdater.setup(&server);         // update firmware
+
   server.begin();
 }
 #endif //ESP8266
