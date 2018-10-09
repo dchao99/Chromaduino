@@ -18,7 +18,7 @@ int GetMatrixIndex(int matrix)
   #ifdef DISPLAY_ROTATED    
   return matrix;
   #else      
-  return LED_MATRIX_COUNT - matrix - 1;
+  return MatrixCount - matrix - 1;
   #endif      
 }
 

@@ -4,7 +4,7 @@
  * Lode's Computer Graphics Tutorial: https://lodev.org/cgtutor/plasma.html
  * v8 David Chao (18-09-12)
  */
- 
+
 #include <Wire.h>
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
@@ -12,66 +12,110 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
-#include "homepage.h"
 #endif //ESP8266
 
-#define LED_MATRIX_COUNT   (2)  // number of LED matrices connected
-#define DISPLAY_ROTATED         // rotates display 180deg from PCB silkscreen orientation
-#include "comm.h"
+#ifdef __AVR__
+ #include <avr/pgmspace.h>
+#elif defined(ESP8266)
+ #include <pgmspace.h>
+#else
+ #define PROGMEM
+#endif
+
+#ifdef DEBUG_ESP_PORT     //this is Arduino IDE's debug option, use it if defined
+ #define DEBUG_PORT DEBUG_ESP_PORT
+#else
+ #define DEBUG_PORT Serial //comment out to disable debugging, or choose Serial1
+#endif
+
+#ifdef DEBUG_PORT
+ #define DEBUG_PRINTF(...) DEBUG_PORT.printf_P( __VA_ARGS__ )
+#else
+ #define DEBUG_PRINTF(...)
+#endif
+
+#ifdef DEBUG_PORT
+ #define DEBUG_PRINT(...) DEBUG_PORT.print( __VA_ARGS__ )
+#else
+ #define DEBUG_PRINT(...)
+#endif
+
+#ifdef DEBUG_PORT //select our own debug options here
+//#define DEBUG_PLASMA
+//#define DEBUG_TIMING
+#endif
+
+#define ColorduinoScreenWidth  (8)
+#define ColorduinoScreenHeight (8)
+
+#define MatrixCount (3)     // number of LED matrices connected
+#define DISPLAY_ROTATED     // rotates display 180deg from PCB silkscreen orientation
 
 #define LIB8STATIC __attribute__ ((unused)) static inline
 #include "trig8.h"              // Copied from FastLED library 
 #include "hsv2rgb.h"
 
-//#define DEBUG
+#if defined(ESP8266)
+ #include "homepage.h"
+#endif //ESP8266
 
-// Choose one special effect, only ONE effect right now
-#define EFFECT_DEEPSLEEP
+// Arrays representing the LEDs we are displaying.
+// our palette index is from -3072 to +3072, the array element is integer.
+int mDisplay[MatrixCount][ColorduinoScreenHeight][ColorduinoScreenWidth];
+
+#include "comm.h"
+#include "font5x7.h"
 
 //********** CONFIGURATION BEGINS
 
 // Arduino: Use default SCL and SDA, nothing to do here
-// ESP8266: SCL_PIN = A5, SDA_PIN = A4
+// ESP8266: SCL_PIN = D4, SDA_PIN = D3
 
 #if defined(ESP8266)
-#define SCL_PIN D4
-#define SDA_PIN D3
-#define RST_PIN D2              // D2 connected to DTR on the Colorduino
+ #define SCL_PIN D4
+ #define SDA_PIN D3
+ #define RST_PIN D2              // D2 connected to DTR on the Colorduino
 #else  //Arduino UNO
-#define RST_PIN A0              // A0 connected to DTR on the UNO
+ #define RST_PIN A0              // A0 connected to DTR on the UNO
 #endif //ESP8266
 
-#define WIRE_BUS_SPEED 400000L  // I2C Bus Speed = 400kHz
+//ESP8266 supports master mode up to approximately 450KHz
+//https://arduino-esp8266.readthedocs.io/en/latest/libraries.html#i2c-wire-library
+#define WIRE_BUS_SPEED 400000L  // I2C Bus Speed = 400kHz, about 2ms per packet
 
-#define ColorduinoScreenWidth  (8)
-#define ColorduinoScreenHeight (8)
+// Choose special effect(s) to enable, only ONE effect at the moment
+#define EFFECT_DEEPSLEEP
 
 const byte matrixBalances[][3] PROGMEM = 
            { {63, 63, 63},    // do gamma correction in-house
              {63, 63, 63},
+             {63, 63, 63},
              {0x80, 0, 0} };  // using 0x80 keeps the default data
 
+typedef enum {
+  PLASMA,   // Plasma Morphing (DEFAULT)
+  SCROLLING // Scrolling Text
+} display_mode;
+
+display_mode  currentMode;
 unsigned long timeShift=3600000;   //initial seed
-#define brightness   webData[0]    //brightness <- set from web page
-#define frameTimeout webData[1]    //(ms/2) between each frame <- set from web page
 unsigned long frameTimestamp;      //frame timer
-unsigned long lastPatchTime;       //webpage patching timer
-const unsigned int WebPatchInterval=2000;  //2 seconds
+const byte defaultScrollSpeed=140; //(ms) 
+byte fontColor[3] = {0,19,127};    //font color {r,g,b}
 
 // web socket variables
-byte   webData[4] = {180,120};   // [0]=Value, [1]=Speed, [2][3] not used
-bool   effectEnable = false;    // Run special LED Effect
-String homeString = "";         // need to copy the homepage from PROGMEM to here to make it dynamic
+#define led_value   webData[0]     //brightness <- web socket data
+#define frame_delay webData[1]     //(ms) between each frame <- web socket data
+byte   webData[4] = {180,140,0,0}; //[2][3] not used
+bool   effectEnable = false;       //Run special LED Effect
+String homeString = "";            //need to copy the homepage from PROGMEM to here to make it dynamic
+byte prev_delay;
 
 // To show off our hardware PWM LED driver (capable of displaying 16M colors) 
 // increase the scaling of the plasma to see more details of the color transition.
 // When using fast sin16(uint_16), need to convert from radians to uint_16 
 // (1 rad = 57.2958 degree).  Default sin() uses radians
 const unsigned int PlasmaScale = 1043;  // = 57.2958 * 65536 / 360 / (10) <- scaler
-
-// Arrays representing the LEDs we are displaying.
-// this palette is -3072 to +3072, an integer type
-int Display[LED_MATRIX_COUNT][ColorduinoScreenHeight][ColorduinoScreenWidth];
 
 // Wi-Fi Settings
 const char* ssid     = "San Leandro";   // your wireless network name (SSID)
@@ -91,24 +135,21 @@ ESP8266HTTPUpdateServer httpUpdater;
 bool Configure(int matrix)
 {
   int idx = GetMatrixIndex(matrix);
-  byte balanceRGB[3];
-  balanceRGB[0] = pgm_read_byte(matrixBalances[idx]);
-  balanceRGB[1] = pgm_read_byte(matrixBalances[idx]+1);
-  balanceRGB[2] = pgm_read_byte(matrixBalances[idx]+2);
-  #ifdef DEBUG
-  char ch[8];
-  sprintf(ch, "%02x%02x%02x", balanceRGB[0], balanceRGB[1], balanceRGB[2]);
-  Serial.println("Config ("+String(matrix)+") RGB="+ch);
-  #endif
+  byte balRGB[3];
+  balRGB[0] = pgm_read_byte(matrixBalances[idx]);
+  balRGB[1] = pgm_read_byte(matrixBalances[idx]+1);
+  balRGB[2] = pgm_read_byte(matrixBalances[idx]+2);
+  DEBUG_PRINTF(PSTR("Config (%u) RGB=%02x%02x%02x\n"),matrix,balRGB[0], balRGB[1], balRGB[2]);
   // write the balances to slave, true if got expected response from matrix
   StartBuffer(matrix);
-  WriteData(matrix, balanceRGB);
+  WriteData(matrix, balRGB);
   return SetBalance(matrix);
 }
 
+// Function: SendDisplay
+// sends the Display data to the given slave LED matrix
 void SendDisplay(int matrix)
 {
-  // sends the Display data to the given slave LED matrix
   StartBuffer(matrix);
 
   // The Arduino wire library uses 32-byte buffer, to prevent overflow,
@@ -121,11 +162,11 @@ void SendDisplay(int matrix)
     for (int col = 0; col < ColorduinoScreenWidth; col++)
     {      
       #ifdef DISPLAY_ROTATED    
-      int hue = Display[matrix][row][col];
-      #else      
-      int hue = Display[matrix][ColorduinoScreenHeight-1-row][ColorduinoScreenWidth-1-col];
+      int hue = mDisplay[matrix][row][col];
+      #else
+      int hue = mDisplay[matrix][ColorduinoScreenHeight-1-row][ColorduinoScreenWidth-1-col];
       #endif
-      HSVtoRGB( pRGB, hue, 255, brightness);
+      Rainbow2RGB( pRGB, hue, 255, led_value);
       pRGB += 3;
       if (++c >= 10) {
         pRGB = dataBuffer;
@@ -140,31 +181,96 @@ void SendDisplay(int matrix)
   }
 }
 
+// Function: SendDisplayFast
+// Sends the Display data to the given slave LED matrix uses a single color and bitmasks
+void SendDisplayFast(int matrix)
+{
+  StartFastCmd(matrix);
+  byte dataBuffer[9];
+  for (int row = 0; row < 8; row++)
+  {
+    dataBuffer[row+1] = 0x00;
+    for (int col = 0; col < 8; col++)
+      #ifdef DISPLAY_ROTATED    
+      if (mDisplay[matrix][row][col])
+      #else      
+      if (mDisplay[matrix][ColorduinoScreenHeight-1-row][ColorduinoScreenWidth-1-col])
+      #endif      
+        dataBuffer[row+1] |= 0x01 << col;
+  }
+  // format the data field for Cmd 0x11 (FAST Write)
+  int idx = 0;
+  dataBuffer[0] = B00000010;     // write black background, DON'T display at end
+  WriteData(matrix, fontColor);  // foreground color
+  for (int i=0; i<3; i++) {
+    WriteData(matrix, dataBuffer+idx);
+    idx += 3;
+  }
+}
+#if defined(ESP8266)
+
+//********** STRING HANDLING AND SCROLLING CODE BEGINS
+
+char marqueStr[100];  // the text we're scrolling
+
+// marqueWin is the logical position of the first visible char showing in the display
+// it has a virtual buffer (leading blanks) indicated by a +pos number, it is 
+// decremented until it reaches the marker -(marqueEnd).
+int marqueWin;
+int marqueEnd;
+
+// Function: DisplayTextFromMarque
+// Populate matrix from the the visiable portion of the marqueStr 
+void DisplayTextFromMarque(int matrix)
+{
+  // updates the display of scrolled text
+  memset(mDisplay[matrix], 0, sizeof(mDisplay[matrix]));
+
+  int col = 0;
+  for (int chIdx = 0; chIdx < (int)strlen(marqueStr); chIdx++)
+  {
+    byte ch = marqueStr[chIdx];
+    int w = font_CheckCache(ch);
+    DisplayChar(matrix, ch, w, (8-font_Height())/2, marqueWin+col);
+    col += w;
+  }
+  marqueEnd = col;
+}
+
+// Function: ScrollText
+// Shift the visible portion of the window one column until no more text left to display
+bool ScrollText()
+{
+  #ifdef DEBUG_SCROLLING
+  DEBUG_PORT.println("Scroll: "+String(marqueWin)+" "+String(marqueEnd));
+  #endif
+  
+  // shift the text, false if scrolled off
+  marqueWin--;
+  if (marqueWin < -marqueEnd) {
+    return false;  // restart
+  }
+  return true;
+}
+
 //********** WEB SERVER AND WEB SOCKET CODE BEGINS
 
-#if defined(ESP8266)
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) 
 {
   switch(type) {
     case WStype_DISCONNECTED:
-      #ifdef DEBUG
-      Serial.printf("[%u] Disconnected!\n", num);
-      #endif
+      DEBUG_PRINTF(PSTR("[%u] Disconnected!\n"), num);
       break;
     case WStype_CONNECTED:
       {
         IPAddress ip = webSocket.remoteIP(num);
-        #ifdef DEBUG        
-        Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-        #endif
+        DEBUG_PRINTF(PSTR("[%u] Connected from %u.%u.%u.%u url: %s\n"), num, ip[0], ip[1], ip[2], ip[3], payload);
         // send message to client
         webSocket.sendTXT(num, "Connected");
       }
       break;
     case WStype_TEXT:
-      #ifdef DEBUG
-      Serial.printf("[%u] Received Text: %s\n", num, payload);
-      #endif
+      DEBUG_PRINTF(PSTR("[%u] Received Text: %s\n"), num, payload);
       if(payload[0] == '#') {
         // Convert payload into 4 separate bytes-size variables
         *(uint32_t*)webData = (uint32_t) strtoul((const char *) &payload[1], NULL, 16);
@@ -181,40 +287,76 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
 void startWiFi()
 {
-  #ifdef DEBUG
-  Serial.print(F("Hostname: "));
-  Serial.println(WiFi.hostname());
-  Serial.print(F("Connecting ."));
-  #endif
-  
+  DEBUG_PRINT(F("Hostname: "));
+  DEBUG_PRINT(WiFi.hostname());
+  DEBUG_PRINT(F("\nConnecting ."));
+
+  WiFi.mode(WIFI_STA); 
   if (WiFi.status() != WL_CONNECTED) 
     WiFi.begin(ssid, password);
       
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    #ifdef DEBUG
-    Serial.print(".");
-    #endif
+    DEBUG_PRINT(".");
   }
 
-  #ifdef DEBUG
-  Serial.println();
-  Serial.print(F("Connected to "));
-  Serial.println(ssid);
-  Serial.print(F("IP address: "));
-  Serial.println(WiFi.localIP());
-  #endif
+  IPAddress ip = WiFi.localIP();
+  DEBUG_PRINTF(PSTR("\nConnected to %s\n"), ssid);
+  DEBUG_PRINTF(PSTR("IP address: %u.%u.%u.%u\n"), ip[0], ip[1], ip[2], ip[3]);
+}
+
+void handleRoot() 
+{
+  patchHomePage(homeString, *(unsigned long*)webData);  
+  server.send(200, "text/html", homeString);
+}
+
+void handleScroll() 
+{ 
+  String message = "Scrolling Display\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET) ? "GET" : "POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+
+  marqueStr[0] = 0;
+  for (uint8_t i = 0; i < server.args(); i++) {
+    String s1 = server.argName(i);
+    String s2 = server.arg(i);
+    message += " " + s1 + ": " + s2 + "\n";
+    if (s1 == "text")
+      strcpy(marqueStr, s2.c_str()); 
+  }
+
+  DEBUG_PRINT(message+"\n");
+    
+  if (marqueStr[0] != 0) {
+    message += "\nText found: ";
+    message += marqueStr;
+    message += "\n";
+  }
+  server.send(200, "text/plain", message);
+ 
+  marqueWin = ColorduinoScreenWidth*MatrixCount;
+  prev_delay = frame_delay;
+  frame_delay = defaultScrollSpeed;   //reset timer to the text scrolling speed
+  frameTimestamp -= 5000;             //guarentee first frame is displayed immediately
+  currentMode = SCROLLING; 
 }
 
 void startServer()
 {
-  // handle index
   homeString = constructHomePage(*(unsigned long*)webData);
-  server.on("/", []() {
-    // send index.html
-    server.send(200, "text/html", homeString);
-  });
 
+  // handle homepage
+  server.on("/", handleRoot);
+
+  // start scrolling text
+  server.on("/scroll", handleScroll);
+    
   // update firmware
   httpUpdater.setup(&server);
   
@@ -222,7 +364,7 @@ void startServer()
 }
 #endif //ESP8266
 
-//********** ARDUINO MAIN CODE BEGINS
+//********** PLASMA MORPHING CODE BEGINS
 
 // Original equation from: https://lodev.org/cgtutor/plasma.html
 // const float PlasmaScale = 10.0; 
@@ -230,11 +372,11 @@ void startServer()
 //             + sin((row+time/7.0) / scaling) + sin(dist(col, row, 192.0, 100.0) / scaling);
 // int hue = (int)(value * 128 * 6); 
 
-void plasma_morph(unsigned long time)
+void plasma_morphing(unsigned long time)
 {
   for (int row = 0; row < 8; row++) 
   {
-    for (int col = 0; col < 8*LED_MATRIX_COUNT; col++)
+    for (int col = 0; col < 8*MatrixCount; col++)
     {
       long value = (long)sin16((col+time) * PlasmaScale) 
                  + (long)sin16((unsigned int)(dist(col, row, 64, 64) * PlasmaScale)) 
@@ -242,13 +384,13 @@ void plasma_morph(unsigned long time)
                  + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScale));
       //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
       int hue = (int)(( value*3 ) >> 7);
-      #ifdef DEBUG
-      //Serial.print(String(hue)+",");
+      #ifdef DEBUG_PLASMA
+      DEBUG_PORT.print(String(hue)+",");
       #endif
-      Display[col/8][row][col%8] =  hue;
+      mDisplay[col/8][row][col%8] =  hue;
     }
-    #ifdef DEBUG
-    //Serial.println();
+    #ifdef DEBUG_PLASMA
+    DEBUG_PORT.println();
     #endif
   } 
 }
@@ -258,16 +400,15 @@ float dist(int a, int b, int c, int d)
   return sqrt((c-a)*(c-a)+(d-b)*(d-b));
 }
 
+//********** ARDUINO MAIN CODE BEGINS
+
 void setup()
 {
-  #ifdef DEBUG
-  Serial.begin(115200);
+  #ifdef DEBUG_PORT
+  DEBUG_PORT.begin(115200);
   delay(10);
-  Serial.println();
-  Serial.println();
-  #if defined(ESP8266)
-  Serial.setDebugOutput(false);  // Use extra debugging details?
-  #endif //ESP8266
+  DEBUG_PORT.println();
+  DEBUG_PORT.println();
   #endif //DEBUG
 
   // Initialise I2C
@@ -285,23 +426,25 @@ void setup()
   digitalWrite(RST_PIN, HIGH);
 
   // keep trying to set the WhiteBal until all slaves are awake
-  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++) 
+  for (int matrix = 0; matrix < MatrixCount; matrix++) 
   {
     do delay(100); while (!Configure(matrix));
   }
 
   #if defined(ESP8266)
+  
+  font_Init();
+  
   // Make up new hostname from our Chip ID (The MAC addr)
   // Note: Max length for hostString is 32, increase array if hostname is longer
   char hostString[16] = {0};
-  sprintf(hostString, "esp8266_%06x", ESP.getChipId()); 
+  sprintf_P(hostString, PSTR("esp8266_%06x"), ESP.getChipId()); 
   WiFi.hostname(hostString);
 
   //** no longer required **
   //WiFi unable to re-connect fix: https://github.com/esp8266/Arduino/issues/2186
   //WiFi.persistent(false);  
   //WiFi.mode(WIFI_OFF); 
-  //WiFi.mode(WIFI_STA); 
   startWiFi();  
 
   // Start webSocket service
@@ -310,9 +453,7 @@ void setup()
 
   // Start MDNS Service
   if(MDNS.begin(hostString)) {
-    #ifdef DEBUG
-    Serial.println("MDNS responder started");
-    #endif
+    DEBUG_PRINTF(PSTR("MDNS responder started\n"));
   }
      
   startServer();
@@ -320,13 +461,14 @@ void setup()
   // Add service to MDNS
   MDNS.addService("http", "tcp", 80);
   MDNS.addService("ws", "tcp", 81);
-  #ifdef DEBUG
-  Serial.printf("HTTPServer ready! Open http://%s.local in your browser\n", hostString);
-  Serial.printf("HTTPUpdateServer ready! Open http://%s.local/update in your browser\n", hostString);
-  #endif //DEBUG
+  
+  DEBUG_PRINTF(PSTR("HTTPServer ready! Open http://%s.local in your browser\n"), hostString);
+  DEBUG_PRINTF(PSTR("HTTPUpdateServer ready! Open http://%s.local/update in your browser\n"), hostString);
   #endif //ESP8266
 
-  frameTimestamp = lastPatchTime = millis();
+  // Start timer
+  currentMode = PLASMA;
+  frameTimestamp = millis();
 }
 
 void loop()
@@ -339,45 +481,65 @@ void loop()
   
   unsigned long now = millis();
 
-  #if defined(ESP8266)
-  if ( now - lastPatchTime >= WebPatchInterval ) {
-    #ifdef DEBUG
-    Serial.println("Patch web page = "+String(now));
-    #endif
-    lastPatchTime = now;
-    patchHomePage(homeString, *(unsigned long*)webData);
-  }
-  #endif //ESP8266
-  
-  if (now - frameTimestamp >= frameTimeout )
+  if (now - frameTimestamp >= frame_delay )
   {
-    #ifdef DEBUG
-    Serial.println("New frame = "+String(now));
+    #ifdef DEBUG_TIMING
+    DEBUG_PORT.println("New frame = "+String(now));
     #endif
     frameTimestamp = now;
-
-    // kick plasma morphing animation
-    plasma_morph(timeShift++);
-    #ifdef DEBUG
-    Serial.println("End of Plasma = "+String(millis()));
-    #endif
-
-    // update the LEDs
-    for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
-    {
-      SendDisplay(matrix);
-    }
-    #ifdef DEBUG
-    Serial.println("End of Send = "+String(millis()));
-    #endif
     
-    // flip to displaying the new pattern
-    for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
+    switch (currentMode) 
     {
+      case PLASMA:
+        // kick plasma morphing animation
+        plasma_morphing(timeShift++);
+        #ifdef DEBUG_TIMING
+        DEBUG_PORT.println("End of Plasma = "+String(millis()));
+        #endif
+
+        // update the LEDs
+        for (int matrix = 0; matrix < MatrixCount; matrix++) {
+          SendDisplay(matrix);
+        }
+        #ifdef DEBUG_TIMING
+        DEBUG_PORT.println("End of Send = "+String(millis()));
+        #endif
+        break;
+
+      case SCROLLING:
+        // update the display with the scrolled text
+        for (int matrix = 0; matrix < MatrixCount; matrix++) {
+          DisplayTextFromMarque(matrix);
+        }
+        #ifdef DEBUG_TIMING
+        DEBUG_PORT.println("End of DisplayText = "+String(millis()));
+        #endif
+        
+        // update the LEDs
+        for (int matrix = 0; matrix < MatrixCount; matrix++) {
+          SendDisplayFast(matrix);
+        }
+        #ifdef DEBUG_TIMING
+        DEBUG_PORT.println("End of Send = "+String(millis()));
+        #endif
+
+        // scroll the text left
+        if (!ScrollText()) {
+          frame_delay = prev_delay;
+          currentMode = PLASMA;   //scrolled off to the end: back to plasma mode
+        }
+        break;
+
+      default:
+        break;
+    } //switch
+
+    // flip to displaying the new pattern
+    for (int matrix = 0; matrix < MatrixCount; matrix++) {
       ShowBuffer(matrix);
     }
   }
-
+    
   if (effectEnable == true) {
     #ifdef EFFECT_DEEPSLEEP 
     effectAllLedOff();
@@ -399,9 +561,9 @@ void ClearDisplay(int matrix)
 
 void effectAllLedOff() 
 {
-  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
+  for (int matrix = 0; matrix < MatrixCount; matrix++)
     ClearDisplay(matrix);
-  for (int matrix = 0; matrix < LED_MATRIX_COUNT; matrix++)
+  for (int matrix = 0; matrix < MatrixCount; matrix++)
     ShowBuffer(matrix);
 }
 #endif //EFFECT_DEEPSLEEP 

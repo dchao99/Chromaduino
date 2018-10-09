@@ -24,13 +24,11 @@ const uint8_t PROGMEM gamma8[] = {
   
 //********** COLOR TOOLS CODE BEGINS
 
-//Rainbow palette tweaks:
+//Converts an HSV color to RGB color (Rainbow palette tweaks)
 //more yellow: boosting/extend red, and reduce green (0-180deg)
 //more indigo/violet and less magenta: reduce blue (240-300deg)
-
-// Converts an HSV color to RGB color
-// hue between 0 to +1536
-void HSVtoRGB(void *pChannel, int hue, uint8_t sat, uint8_t val) 
+//hue: between -1536 to +1536 (we could use 1536 to indicate black color)
+void Rainbow2RGB(void *pChannel, int hue, uint8_t sat, uint8_t val) 
 {
   uint8_t  r, g, b;
   uint16_t s1, v1;

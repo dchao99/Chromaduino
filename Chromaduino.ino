@@ -7,7 +7,7 @@
 //   * an M54564FP which drives the LED rows.
 //       ATMEGA328P pins PB0-4 & PD3,4 connect to M54564FP pins IN1-8. M54564FP pins OUT1-8 connect to LED pins VCC0-7
 //   * an EXTERNAL master Arduino device driving the LED colours via I2C/Wire (address 0x70)
-// This code is based on the "Colorduino" library but simplified/clarified and with the addition of a simple I2C master/slave protocol.
+// This code is using the "Colorduino" library but with the addition of a simple I2C master/slave protocol.
 //
 // Commands are a 1-byte transmission from the Master to the Chromaduino (Slave, address 0x70).  Data is a 3-byte transmission. 
 // The Chromaduino has two RGB channel buffers of 3x8x8 bytes.  One buffer (READ) is being read from to drive the LED display. 
@@ -18,10 +18,10 @@
 // 0x00 sets the write pointer to the start of the WRITE buffer.
 // 0x01 swaps the WRITE and READ buffers
 // 0x02 takes the low 6 bits of the first 3 bytes in the WRITE buffer as GLOBAL scalars of the R, G and B values ("colour balance").  
-//       The default is 35, 55, 63.  This downplays the intensity of Red/Green to achieve a reasonable "White"
+//       The default is 55, 63, 63.  This downplays the intensity of Red to achieve a reasonable "White"
 //       If the first byte is 0x80 the command is ignored
 // 0x03 takes the 1st byte in the WRITE buffer as the TCNT2 value, provided the 2nd and 3rd bytes are 16 (clock freq in MHz) and 128 (clock divisor)
-//       TCNT2 drives the timer which updates the LED rows. The default is 99 for a frequency of 800Hz.  
+//       TCNT2 drives the timer which updates the LED rows. The default is 99 for a frequency of 800Hz, this gives a matrix refresh rate of 100Hz.  
 //       For a desired FREQ in Hz, TCNT2 = 255 - CLOCK/FREQ where CLOCK=16000000/128. 
 // 
 // 0x10 clears the WRITE buffer to all 0's
@@ -53,16 +53,22 @@
 #include <Wire.h>
 #include <Colorduino.h>
 
-#define DEMO                      // enable demo
-//#define DEBUG                   // enable debug output to console
 
+//#define DEBUG               // enable debug output to console
+#ifdef DEBUG
+ #define DEBUG_PRINT(...) Serial.print( __VA_ARGS__ )
+#else
+ #define DEBUG_PRINT(...)
+#endif
+
+#define DEMO                  // enable demo
 #ifdef DEMO
-#define LIB8STATIC __attribute__ ((unused)) static inline
-#include "trig8.h"                // Copied from FastLED library 
-#include "hsv2rgb.h"
+ #define LIB8STATIC __attribute__ ((unused)) static inline
+ #include "trig8.h"            // Copied from FastLED library 
+ #include "hsv2rgb.h"
 #endif //DEMO
 
-#define WIRE_DEVICE_ADDRESS 0x70  // I2C address
+#define WIRE_DEVICE_ADDRESS 0x72  // I2C address
 
 #define MatrixChannels     3
 #define MatrixLeds         ColorduinoScreenHeight*ColorduinoScreenWidth
@@ -299,16 +305,12 @@ void loop()
                        + (long)sin16((unsigned int)(dist(col, row, 192, 100) * PlasmaScale));
             //map to -3072 to +3072 then onto 4 palette loops (0 to 1536) x 4
             int hue = (int)(( value*3 ) >> 7);
-            #ifdef DEBUG
-            Serial.print(String(hue)+",");
-            #endif
-            HSVtoRGB( pChannel, hue, 255, brightness);
+            DEBUG_PRINT(String(hue)+",");
+            Rainbow2RGB( pChannel, hue, 255, brightness);
           }
           pChannel++;
         }
-        #ifdef DEBUG
-        Serial.println();
-        #endif
+        DEBUG_PRINT("\n");
       }
       Colorduino.FlipPage();
 
@@ -316,9 +318,7 @@ void loop()
         demoStep++;
         demoTimeout = 500UL;  // solid color pattern frame delay
       } else {
-        #ifdef DEBUG
-        Serial.println("-----");
-        #endif      
+        DEBUG_PRINT(F("-----\n"));
         timeShift++;
         demoTimeout = 120UL;  // plasm morphing frame delay
       }
