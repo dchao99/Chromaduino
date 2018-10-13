@@ -93,9 +93,15 @@ const byte matrixBalances[][3] PROGMEM =
              {0x80, 0, 0} };  // using 0x80 keeps the default data
 
 typedef enum {
-  PLASMA,   // Plasma Morphing (DEFAULT)
+  PLASMA,   // Plasma Morphing 
   SCROLLING // Scrolling Text
 } display_mode;
+
+typedef enum {
+  EMPTY, 
+  AVAIL,
+  FULL
+} queue_status;
 
 display_mode  currentMode;
 unsigned long timeShift=3600000;   //initial seed
@@ -211,13 +217,37 @@ void SendDisplayFast(int matrix)
 
 //********** STRING HANDLING AND SCROLLING CODE BEGINS
 
-char marqueStr[100];  // the text we're scrolling
+char marqueStr[4][80];  // the text we're scrolling, queue size = 4
+int read_ptr, write_ptr;
 
 // marqueWin is the logical position of the first visible char showing in the display
 // it has a virtual buffer (leading blanks) indicated by a +pos number, it is 
 // decremented until it reaches the marker -(marqueEnd).
 int marqueWin;
 int marqueEnd;
+
+void marque_Init()
+{
+  read_ptr = write_ptr = 0;
+  for (int i=0; i< 4; i++)
+    marqueStr[i][0] = 0;
+}
+
+bool checkMarqueQueue(queue_status check)
+{
+  switch(check) 
+  {
+    case EMPTY:
+      return (marqueStr[read_ptr][0] == 0);
+      break;
+    case AVAIL:
+      return (marqueStr[read_ptr][0] != 0);
+      break;
+    case FULL:
+      return (marqueStr[write_ptr][0] != 0);
+      break;
+  }
+}
 
 // Function: DisplayTextFromMarque
 // Populate matrix from the the visiable portion of the marqueStr 
@@ -227,9 +257,9 @@ void DisplayTextFromMarque(int matrix)
   memset(mDisplay[matrix], 0, sizeof(mDisplay[matrix]));
 
   int col = 0;
-  for (int chIdx = 0; chIdx < (int)strlen(marqueStr); chIdx++)
+  for (int chIdx = 0; chIdx < (int)strlen(marqueStr[read_ptr]); chIdx++)
   {
-    byte ch = marqueStr[chIdx];
+    byte ch = marqueStr[read_ptr][chIdx];
     int w = font_CheckCache(ch);
     DisplayChar(matrix, ch, w, (8-font_Height())/2, marqueWin+col);
     col += w;
@@ -253,11 +283,32 @@ bool ScrollText()
   return true;
 }
 
+void UpdateText()
+{
+  marqueStr[read_ptr][0] = 0;  // done, mark string empty
+  read_ptr++;
+  read_ptr &= 0x03;
+
+  if (checkMarqueQueue(EMPTY)) 
+  {
+    //queue empty, back to plasma mode
+    frame_delay = prev_delay;
+    currentMode = PLASMA;
+  } 
+  else
+  {
+    DEBUG_PRINTF(PSTR("Display Text = %s\n"), marqueStr[read_ptr]);
+    marqueWin = ColorduinoScreenWidth*MatrixCount;
+    frameTimestamp -= 5000;   //guarentee first frame is displayed immediately
+  }
+}
+
 //********** WEB SERVER AND WEB SOCKET CODE BEGINS
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) 
 {
-  switch(type) {
+  switch(type) 
+  {
     case WStype_DISCONNECTED:
       DEBUG_PRINTF(PSTR("[%u] Disconnected!\n"), num);
       break;
@@ -312,42 +363,64 @@ void handleRoot()
 }
 
 void handleScroll() 
-{ 
-  String message = "Scrolling Display\n";
+{
+  String message;
 
-  marqueStr[0] = 0;
+  message = F("URI: ");
+  message += server.uri();
+  message += F(", Method: ");
+  message += (server.method() == HTTP_GET) ? F("GET") : F("POST");
+  message += F(", Arguments: ");
+  message += server.args();
+  message += "\n";
+  DEBUG_PRINT(message);
+
+  message = F("Scrolling Display\n");
+
+  if (checkMarqueQueue(FULL))
+  {
+    message += F("Busy...\n");
+    server.send(200, "text/plain", message);
+    return;
+  }
+
   for (uint8_t i = 0; i < server.args(); i++) {
     String s1 = server.argName(i);
     String s2 = server.arg(i);
-    if (s1 == "text")
-      strcpy(marqueStr, s2.c_str()); 
+    if (s1 == "text") {
+      strcpy(marqueStr[write_ptr], s2.c_str());
+      break;
+    }
   }
 
-  if (marqueStr[0] != 0) {
-    message += "Text: ";
-    message += marqueStr;
+  if (marqueStr[write_ptr][0] != 0) {
+    message += F("Text: ");
+    message += marqueStr[write_ptr];
     message += "\n";
+    write_ptr++;
+    write_ptr &= 0x03;
   }
 
   server.send(200, "text/plain", message);
-  DEBUG_PRINT(message);
 
-  if (marqueStr[0] != 0) {
-    marqueWin = ColorduinoScreenWidth*MatrixCount;
+  if ((currentMode==PLASMA) && checkMarqueQueue(AVAIL)) 
+  {
+    DEBUG_PRINTF(PSTR("Display Text = %s\n"), marqueStr[read_ptr]);
     prev_delay = frame_delay;
-    frame_delay = defaultScrollSpeed;   //reset timer to the text scrolling speed
-    frameTimestamp -= 5000;             //guarentee first frame is displayed immediately
+    frame_delay = defaultScrollSpeed; //set timer to the text scrolling speed
+    marqueWin = ColorduinoScreenWidth*MatrixCount;
+    frameTimestamp -= 5000;           //guarentee first frame is displayed immediately
     currentMode = SCROLLING;
   }
 }
 
 void handleNotFound() {
-  String message = "File Not Found\n\n";
-  message += "URI: ";
+  String message = F("File Not Found\n\n");
+  message += F("URI: ");
   message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
+  message += F("\nMethod: ");
+  message += (server.method() == HTTP_GET) ? F("GET") : F("POST");
+  message += F("\nArguments: ");
   message += server.args();
   message += "\n";
 
@@ -441,6 +514,7 @@ void setup()
   #if defined(ESP8266)
   
   font_Init();
+  marque_Init();
   
   // Make up new hostname from our Chip ID (The MAC addr)
   // Note: Max length for hostString is 32, increase array if hostname is longer
@@ -532,8 +606,7 @@ void loop()
 
         // scroll the text left
         if (!ScrollText()) {
-          frame_delay = prev_delay;
-          currentMode = PLASMA;   //scrolled off to the end: back to plasma mode
+          UpdateText();   // scrolled off to the end: new text
         }
         break;
 

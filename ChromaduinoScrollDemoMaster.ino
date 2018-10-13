@@ -237,7 +237,7 @@ void UpdateText()
   if (i >= sizeof(string_table)/2)  i = 0;
   #endif //ESP8266
 
-  DEBUG_PRINT("*** UpdateText ==> "+(String)marqueStr+"\n");
+  DEBUG_PRINT("Display Text = "+(String)marqueStr+"\n");
 }
 
 //********** ARDUINO MAIN CODE BEGINS
